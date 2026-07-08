@@ -41,6 +41,15 @@ It's one self-contained `index.html` — no build step, no server, no internet.
 - **♾️ Endless Survival** — infinite scaling waves with a saved high score.
 - Later campaigns **unlock** as you earn stars. All progress is saved locally.
 
+## 🎨 Look & feel
+
+Built to read like *Age of War*: a fixed, wide side-view battlefield with a single
+grounded horizon. **The world modernizes as you evolve** — each age shifts the sky, hills,
+and horizon scenery (rocks → trees → castles → smokestack skyline → glowing neon towers),
+while each campaign keeps its own color identity. Combat has punchy feedback: dust puffs
+kicked up by marching units, hit-sparks on every clash, muzzle flashes, and floating gold.
+Team-colored ground rings (blue vs red) keep both armies instantly legible.
+
 ## 🛠 Tech
 
 - Pure HTML/CSS/JavaScript in a single file. Canvas rendering, `requestAnimationFrame` loop,

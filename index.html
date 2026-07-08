@@ -408,7 +408,7 @@ const G={
   paused:false, speed:1, over:false,
   t:0,
   player:null, enemy:null,
-  units:[], projectiles:[], effects:[], floats:[],
+  units:[], projectiles:[], effects:[], floats:[], parts:[],
 };
 
 function newSide(isPlayer){
@@ -429,7 +429,7 @@ function startBattle(){
   const c=G.campaign, b=G.battle;
   RNG=mulberry32(((c?c.id.length*97:7)+(b?b.idx:0)*131+ (G.endless?G.endlessWave:0)*17)||1);
   G.mode='battle'; G.over=false; G.paused=false; G.speed=1; G.t=0;
-  G.units=[];G.projectiles=[];G.effects=[];G.floats=[];
+  G.units=[];G.projectiles=[];G.effects=[];G.floats=[];G.parts=[];
   $('btnSpeed').textContent='1×';
 
   const P=newSide(true), E=newSide(false);
@@ -555,7 +555,10 @@ function update(dt){
         const dmg=u.def.dmg*(u.side.isPlayer?u.side.dmgMul:1);
         if(u.def.ranged){
           spawnProj(u, atkIsBase?null:atkTarget, atkIsBase?baseX:atkTarget.x, dmg, atkIsBase);
+          spawnSpark(u.x+u.dir*16*scaleF, groundY-44*scaleF, 'rgba(255,240,150,'); // muzzle flash
         }else{
+          const cx=(u.x+(atkIsBase?baseX:atkTarget.x))/2;
+          spawnSpark(cx, groundY-26*scaleF); // melee clash sparks
           if(atkIsBase){ dealBaseDmg(enemySide,dmg,u.side);}
           else dealDmg(atkTarget,dmg,u.side);
         }
@@ -568,6 +571,7 @@ function update(dt){
         const spd=u.def.spd*scaleF*(u.side.isPlayer?u.side.spdMul:1);
         u.x+=u.dir*spd*dt;
         u.x=clamp(u.x,fieldL-4,fieldR+4);
+        if(Math.random()<dt*7) spawnDust(u.x-u.dir*10*scaleF); // kicked-up dust (cosmetic RNG)
       }else u.state='wait';
     }
   }
@@ -583,7 +587,7 @@ function update(dt){
       else if(p.target && p.target.hp>0){ dealDmg(p.target,p.dmg,p.side);}
       else { // target gone — small splash miss
       }
-      spawnEffect(p.x, groundY-30*scaleF, '💥', 0.25, 18);
+      spawnSpark(p.x, groundY-30*scaleF, 'rgba(255,200,110,');
     }
   }
   G.projectiles=G.projectiles.filter(p=>!p.dead);
@@ -602,7 +606,8 @@ function update(dt){
   }
   G.units=G.units.filter(u=>u.hp>0);
 
-  // effects + floats
+  // particles + effects + floats
+  updateParts(dt);
   for(const e of G.effects){e.t+=dt; e.y-=e.rise*dt;}
   G.effects=G.effects.filter(e=>e.t<e.life);
   for(const f of G.floats){f.t+=dt; f.y-=26*dt;}
@@ -828,27 +833,118 @@ function updateHUD(){
 }
 
 /* =========================================================================
+   ENVIRONMENT — the world modernizes as YOUR age advances (Age-of-War style).
+   Each age has its own palette + era scenery; blended toward the campaign tint.
+   ========================================================================= */
+function hex(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');return[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+function mix(a,b,t){const A=hex(a),B=hex(b);return`rgb(${A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(',')})`;}
+function shade(c,t){return mix(c, t<0?'#000000':'#ffffff', Math.abs(t));}
+const ENV=[
+  {sky1:'#7aa8d8',sky2:'#d8e6ea',mtn:'#7d8a76',hill:'#7c8a52',g1:'#6f7a44',g2:'#4c5730',props:'rock'},   // Stone
+  {sky1:'#6d95cf',sky2:'#c4d6e4',mtn:'#5f6f82',hill:'#5f7a4a',g1:'#5f6d3a',g2:'#3d4c29',props:'tree'},   // Iron
+  {sky1:'#5f7fbf',sky2:'#aecae0',mtn:'#4d5f7d',hill:'#4f6f46',g1:'#586738',g2:'#37461f',props:'castle'}, // Castle
+  {sky1:'#7a7684',sky2:'#c8bda8',mtn:'#4c4c58',hill:'#47505a',g1:'#4c5054',g2:'#2f3438',props:'city'},   // Modern
+  {sky1:'#141433',sky2:'#3a2b5e',mtn:'#26264a',hill:'#2f3057',g1:'#31374a',g2:'#1e2030',props:'neon'},   // Future
+];
+function curEnv(){
+  const P=G.player, c=G.campaign, e=ENV[P?P.ageIdx:0], th=c.theme;
+  // blend toward campaign identity so each timeline stays distinct
+  const t=0.28;
+  return {
+    sky1:mix(e.sky1,th.sky1,t), sky2:mix(e.sky2,th.sky2,t*0.7),
+    mtn:mix(e.mtn,th.sky1,t), hill:mix(e.hill,th.ground,t),
+    g1:mix(e.g1,th.ground,t*0.6), g2:mix(e.g2,th.ground2,t*0.6),
+    props:e.props,
+  };
+}
+// silhouette scenery drawn along the horizon per era
+function drawProps(env){
+  const y=groundY, base=shade(env.hill,-0.35);
+  ctx.fillStyle=base;
+  const seed=(G.campaign?G.campaign.id.length:3);
+  function at(fx){return fieldL+(fieldR-fieldL)*fx;}
+  const k=env.props;
+  const spots=[0.02,0.2,0.34,0.52,0.66,0.8,0.97];
+  spots.forEach((fx,i)=>{
+    const x=at(fx), s=scaleF*(0.8+((i*7+seed)%5)*0.12);
+    ctx.save(); ctx.translate(x,y);
+    if(k==='rock'){ ctx.beginPath(); ctx.moveTo(-16*s,0);ctx.lineTo(-6*s,-16*s);ctx.lineTo(8*s,-11*s);ctx.lineTo(18*s,0);ctx.closePath(); ctx.fill(); }
+    else if(k==='tree'){ ctx.fillRect(-2*s,-18*s,4*s,18*s); ctx.beginPath(); ctx.arc(0,-22*s,12*s,0,6.28); ctx.fill(); }
+    else if(k==='castle'){ ctx.fillRect(-14*s,-34*s,28*s,34*s); for(let b=0;b<4;b++)ctx.fillRect(-14*s+b*8*s,-40*s,5*s,6*s); ctx.fillRect(10*s,-46*s,8*s,46*s); }
+    else if(k==='city'){ const h=(24+((i*13+seed)%5)*10)*s; ctx.fillRect(-12*s,-h,24*s,h);
+      ctx.fillStyle=shade(env.hill,-0.15); for(let wy=-h+6*s;wy<-6*s;wy+=8*s)for(let wx=-8*s;wx<8*s;wx+=7*s)ctx.fillRect(wx,wy,3*s,3*s); ctx.fillStyle=base;
+      if(i%2)for(let p=0;p<3;p++){ctx.fillRect(-8*s+p*8*s,-h-8*s,4*s,8*s);} }  // smokestacks
+    else if(k==='neon'){ const h=(30+((i*11+seed)%6)*11)*s; ctx.fillRect(-10*s,-h,20*s,h);
+      ctx.fillStyle=['#7ee0ff','#ff6bd0','#b07bff'][i%3]; ctx.fillRect(-2*s,-h-14*s,4*s,14*s); ctx.beginPath();ctx.arc(0,-h-16*s,3*s,0,6.28);ctx.fill(); ctx.fillStyle=base; }
+    ctx.restore();
+  });
+}
+
+/* ---------- particles: dust puffs, hit sparks, muzzle flash ----------
+   Cosmetic only — uses Math.random (NOT the seeded game RNG) so visual
+   density never perturbs gameplay/enemy-AI decisions. */
+const vr=(a,b)=>a+Math.random()*(b-a);
+function spawnDust(x){
+  for(let i=0;i<2;i++) G.parts.push({x:x+vr(-6,6),y:groundY-2,vx:vr(-14,14),vy:vr(-24,-6),
+    g:40,t:0,life:vr(0.35,0.6),size:vr(2,4)*scaleF,color:'rgba(210,200,170,',type:'dust'});
+}
+function spawnSpark(x,y,color){
+  for(let i=0;i<6;i++){const a=vr(0,6.28),sp=vr(40,150);
+    G.parts.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-30,g:120,t:0,life:vr(0.2,0.4),
+      size:vr(1.5,3)*scaleF,color:color||'rgba(255,220,120,',type:'spark'});}
+}
+function updateParts(dt){
+  for(const p of G.parts){ p.t+=dt; p.vy+=p.g*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; }
+  G.parts=G.parts.filter(p=>p.t<p.life);
+}
+function drawParts(){
+  for(const p of G.parts){
+    const a=clamp(1-p.t/p.life,0,1);
+    ctx.fillStyle=p.color+(a).toFixed(2)+')';
+    if(p.type==='spark'){ ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size); }
+    else { ctx.beginPath(); ctx.arc(p.x,p.y,p.size*(0.6+p.t*1.5),0,6.28); ctx.fill(); }
+  }
+}
+
+/* =========================================================================
    RENDER
    ========================================================================= */
 function render(){
   ctx.clearRect(0,0,W,H);
   if(G.mode!=='battle'){ return; }
   const c=G.campaign, th=c.theme, P=G.player, E=G.enemy;
-  // sky
+  const env=curEnv();
+  // sky (era-driven)
   const sky=ctx.createLinearGradient(0,0,0,groundY);
-  sky.addColorStop(0,th.sky1); sky.addColorStop(1,th.sky2);
+  sky.addColorStop(0,env.sky1); sky.addColorStop(1,env.sky2);
   ctx.fillStyle=sky; ctx.fillRect(0,0,W,groundY);
-  // parallax hills
-  ctx.fillStyle='#00000022';
+  // drifting clouds (only moving parallax layer — camera is fixed)
+  const drift=(G.t*8)%(W+200);
+  ctx.fillStyle=env.props==='neon'?'#ffffff10':'#ffffff28';
+  for(let i=0;i<4;i++){ const cx=((i*W/3.2 - drift)%(W+200))-100, cy=groundY*0.28+i*22;
+    ctx.beginPath(); ctx.ellipse(cx,cy,60*scaleF,18*scaleF,0,0,6.28);
+    ctx.ellipse(cx+40*scaleF,cy+6*scaleF,42*scaleF,14*scaleF,0,0,6.28); ctx.fill(); }
+  // far mountains
+  ctx.fillStyle=env.mtn;
   ctx.beginPath(); ctx.moveTo(0,groundY);
-  for(let x=0;x<=W;x+=40) ctx.lineTo(x, groundY-40-30*Math.sin(x*0.006+2));
+  for(let x=0;x<=W;x+=30) ctx.lineTo(x, groundY-90*scaleF-70*scaleF*Math.abs(Math.sin(x*0.004+1.3)));
   ctx.lineTo(W,groundY); ctx.fill();
-  // ground
+  // mid hills
+  ctx.fillStyle=env.hill;
+  ctx.beginPath(); ctx.moveTo(0,groundY);
+  for(let x=0;x<=W;x+=30) ctx.lineTo(x, groundY-40*scaleF-34*scaleF*Math.sin(x*0.006+2));
+  ctx.lineTo(W,groundY); ctx.fill();
+  // era scenery silhouettes along the horizon
+  drawProps(env);
+  // ground (era-driven)
   const gr=ctx.createLinearGradient(0,groundY,0,H);
-  gr.addColorStop(0,th.ground); gr.addColorStop(1,th.ground2);
+  gr.addColorStop(0,env.g1); gr.addColorStop(1,env.g2);
   ctx.fillStyle=gr; ctx.fillRect(0,groundY,W,H-groundY);
-  ctx.strokeStyle='#0004'; ctx.lineWidth=2;
+  ctx.strokeStyle='#0005'; ctx.lineWidth=2*scaleF;
   ctx.beginPath();ctx.moveTo(0,groundY);ctx.lineTo(W,groundY);ctx.stroke();
+  // subtle ground texture streaks
+  ctx.strokeStyle=shade(env.g2,-0.2); ctx.lineWidth=1;
+  for(let x=(G.t*0)%40;x<W;x+=46){ ctx.beginPath(); ctx.moveTo(x,groundY+10*scaleF); ctx.lineTo(x+18*scaleF,groundY+10*scaleF); ctx.stroke(); }
 
   // bases
   drawBase(P, fieldL, th.baseP, true);
@@ -856,6 +952,9 @@ function render(){
 
   // turret icons on bases
   drawTurrets(P,fieldL,true); drawTurrets(E,fieldR,false);
+
+  // ground particles (dust) behind units
+  drawParts();
 
   // sort units by x so nearer ones draw over
   const us=[...G.units].sort((a,b)=>a.x-b.x);
@@ -913,11 +1012,16 @@ function drawTurrets(side,x,isP){
   });
 }
 function drawUnit(u){
-  const size=30*scaleF;
+  const size=32*scaleF;
   const y=groundY-22*scaleF - (u.state==='walk'?Math.abs(Math.sin(u.bob))*3*scaleF:0);
+  // team-colored ground ring for instant side ID
+  ctx.globalAlpha=0.5;
+  ctx.fillStyle=u.side.isPlayer?'rgba(90,190,255,':'rgba(255,90,90,';
+  ctx.fillStyle=(u.side.isPlayer?'rgba(90,190,255,0.35)':'rgba(255,90,90,0.35)');
+  ctx.beginPath(); ctx.ellipse(u.x,groundY-2,size*0.42,size*0.15,0,0,6.28); ctx.fill();
   // shadow
-  ctx.globalAlpha=0.25; ctx.fillStyle='#000';
-  ctx.beginPath(); ctx.ellipse(u.x,groundY-2,size*0.4,size*0.14,0,0,6.28); ctx.fill();
+  ctx.globalAlpha=0.22; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(u.x,groundY-1,size*0.34,size*0.11,0,0,6.28); ctx.fill();
   ctx.globalAlpha=1;
   // hp bar
   if(u.hp<u.maxHp){
