@@ -6,18 +6,22 @@
 import { CampaignDef, Commander, EraDef, LevelDef, Role, RigConfig, SpecialDef, UnitDef } from './types';
 
 /* ------------------------------------------------------------ role bases */
+/** Move speeds tuned up ~25% for the long scrolling lane. */
 const ROLE_BASE: Record<Role, { hp: number; dmg: number; range: number; cdMs: number; spd: number; cost: number; sup: number }> = {
-  melee:  { hp: 150, dmg: 18, range: 46,  cdMs: 900,  spd: 64,  cost: 55,  sup: 1 },
-  fast:   { hp: 95,  dmg: 14, range: 44,  cdMs: 700,  spd: 118, cost: 65,  sup: 1 },
-  ranged: { hp: 80,  dmg: 22, range: 230, cdMs: 1100, spd: 56,  cost: 85,  sup: 2 },
-  tank:   { hp: 520, dmg: 16, range: 50,  cdMs: 1200, spd: 40,  cost: 150, sup: 3 },
-  siege:  { hp: 140, dmg: 70, range: 330, cdMs: 2200, spd: 36,  cost: 210, sup: 4 },
+  melee:  { hp: 150, dmg: 18, range: 46,  cdMs: 900,  spd: 80,  cost: 55,  sup: 1 },
+  fast:   { hp: 95,  dmg: 14, range: 44,  cdMs: 700,  spd: 148, cost: 65,  sup: 1 },
+  ranged: { hp: 80,  dmg: 22, range: 230, cdMs: 1100, spd: 70,  cost: 85,  sup: 2 },
+  tank:   { hp: 520, dmg: 16, range: 50,  cdMs: 1200, spd: 50,  cost: 150, sup: 3 },
+  siege:  { hp: 140, dmg: 70, range: 330, cdMs: 2200, spd: 45,  cost: 210, sup: 4 },
 };
 const eraScale = (t: number) => ({ hp: 1 + 0.85 * t, dmg: 1 + 0.8 * t, cost: 1 + 0.7 * t });
 
 export const EVOLVE_XP = [0, 90, 220, 420, 720];      // XP to evolve INTO era idx (0-based)
 export const BASE_HP_SCALE = 0.6;
-export const SUPPLY_CAP = 8;
+/** Troop limit grows with each era: base + (era-1) * per-era bonus. */
+export const SUPPLY_BASE = 10;
+export const SUPPLY_PER_ERA = 3;
+export const supplyCapFor = (era: number): number => SUPPLY_BASE + (era - 1) * SUPPLY_PER_ERA;
 export const PLAYER_INCOME = 9;                        // gold/sec passive trickle
 export const XP_TRICKLE_PLAYER = 8;                    // keeps evolution progressing sans kills
 export const XP_TRICKLE_ENEMY = 6.5;

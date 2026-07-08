@@ -17,10 +17,13 @@ The production build is **one self-contained file**: [`dist/index.html`](dist/in
 
 ## 🎮 The game
 
-Single-lane tug-of-war: units auto-walk and fight on contact; destroy the enemy base before
-yours falls. Gold from kills + a trickle buys units, base **turrets**, era **evolution**, and a
-charged **special** (boulder → airstrike → dragonfire → orbital laser). A **supply cap + spawn
-queue** forces spend timing over spam.
+Single-lane tug-of-war on a **scrolling battlefield** — the lane is far wider than the screen,
+so you swipe/drag (or use the minimap strip and ⇤ ⚔ ⇥ jump buttons) to pan between your base,
+the front line, and the enemy base. Both base HP bars stay pinned to the top corners. Units
+auto-walk and fight on contact; destroy the enemy base before yours falls. Gold from kills + a
+trickle buys units, base **turrets**, era **evolution**, and a charged **special** (boulder →
+airstrike → dragonfire → orbital laser). A **supply cap that grows each era** (10 → 22) plus a
+spawn queue forces spend timing over spam.
 
 - **3 campaigns × 5 eras × 3 units = 45 hand-rigged units**
   - 🗿 Rise of Man — Stone → Iron → Castle → Modern → Future

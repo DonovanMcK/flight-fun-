@@ -1,6 +1,7 @@
 import { useEffect, useReducer } from 'react';
-import { engine } from '../game/engine';
+import { engine, LANE_L, LANE_R } from '../game/engine';
 import { EVOLVE_XP } from '../game/data';
+import { jumpCamera } from '../game/render';
 import { UnitIcon } from './UnitIcon';
 import { resumeAudio } from '../game/sfx';
 
@@ -38,6 +39,11 @@ export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => vo
           <div className="xp-track"><div className="xp-fill" style={{ width: `${xpPct}%` }} /></div>
         </div>
         <div className="spacer" />
+        <div className="cam-btns">
+          <button className="icon-btn slim" title="My base" onClick={() => jumpCamera(LANE_L + 80)}>⇤</button>
+          <button className="icon-btn slim" title="Front line" onClick={() => jumpCamera(engine.frontX())}>⚔</button>
+          <button className="icon-btn slim" title="Enemy base" onClick={() => jumpCamera(LANE_R - 80)}>⇥</button>
+        </div>
         <button className="icon-btn" onClick={() => { engine.speed = engine.speed === 1 ? 2 : engine.speed === 2 ? 3 : 1; }}>
           {engine.speed}×
         </button>

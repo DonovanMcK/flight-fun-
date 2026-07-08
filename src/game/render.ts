@@ -9,6 +9,30 @@ import { drawUnit } from './rig';
 import { rrS, cirS, polyS, shade, seg, pt, clamp, lerp, TAU } from './primitives';
 import { BaseState, Projectile } from './types';
 
+/* ------------------------------------------------------------- camera */
+/** World units visible at once — the lane (LANE_W) is far wider, so the
+ *  camera scrolls left/right to reach the bases. */
+export const VIEW_W = 860;
+export const camera = { x: 0, target: null as number | null };
+let lastScale = 1;
+
+const clampCam = (x: number): number => clamp(x, 0, LANE_W - VIEW_W);
+/** Pan by a screen-pixel delta (drag/swipe/wheel). Cancels any glide target. */
+export function panCamera(dxScreen: number): void {
+  camera.target = null;
+  camera.x = clampCam(camera.x + dxScreen / lastScale);
+}
+/** Glide the camera so `worldX` ends up centered. */
+export function jumpCamera(worldX: number): void {
+  camera.target = clampCam(worldX - VIEW_W / 2);
+}
+/** Minimap hit-test + scrub support: screen-space rect of the strip. */
+export const minimapRect = { x: 0, y: 0, w: 0, h: 0 };
+export function minimapSeek(screenX: number): void {
+  const frac = clamp((screenX - minimapRect.x) / minimapRect.w, 0, 1);
+  camera.target = clampCam(frac * LANE_W - VIEW_W / 2);
+}
+
 interface EraEnv { sky1: string; sky2: string; mtn: string; hill: string; g1: string; g2: string; props: 'rock' | 'tree' | 'castle' | 'city' | 'neon'; }
 const ERA_ENV: EraEnv[] = [
   { sky1: '#7aa8d8', sky2: '#e8d8b8', mtn: '#7d8a76', hill: '#7c8a52', g1: '#6f7a44', g2: '#4c5730', props: 'rock' },
@@ -82,11 +106,13 @@ export function chunkedBar(
 }
 
 /* ------------------------------------------------------------- background */
-function drawProps(ctx: CanvasRenderingContext2D, env: EraEnv, W: number, gy: number, s: number): void {
+function drawProps(ctx: CanvasRenderingContext2D, env: EraEnv, gy: number, s: number, wx: (x: number) => number): void {
   const base = shade(rgbHex(env.hill), -0.35);
-  const spots = [0.03, 0.2, 0.34, 0.52, 0.66, 0.8, 0.96];
+  // world-anchored scenery across the whole lane so it scrolls with the camera
+  const spots = [0.02, 0.1, 0.18, 0.27, 0.36, 0.45, 0.54, 0.63, 0.72, 0.81, 0.9, 0.98];
   spots.forEach((fx, i) => {
-    const x = W * fx, k = env.props, sc = s * (0.85 + ((i * 7 + 3) % 5) * 0.12);
+    const x = wx(LANE_W * fx), k = env.props, sc = s * (0.85 + ((i * 7 + 3) % 5) * 0.12);
+    if (x < -80 || x > ctx.canvas.width + 80) return;   // cull (canvas.width ≥ css width, so never over-culls)
     ctx.save(); ctx.translate(x, gy); ctx.fillStyle = base; ctx.strokeStyle = base;
     if (k === 'rock') {
       ctx.beginPath(); ctx.moveTo(-16 * sc, 0); ctx.lineTo(-6 * sc, -15 * sc); ctx.lineTo(8 * sc, -11 * sc); ctx.lineTo(17 * sc, 0); ctx.closePath(); ctx.fill();
@@ -115,10 +141,11 @@ function drawProps(ctx: CanvasRenderingContext2D, env: EraEnv, W: number, gy: nu
 }
 
 /* ------------------------------------------------------------------ base */
-function drawBase(ctx: CanvasRenderingContext2D, b: BaseState, color: string, era: number, gy: number, s: number, popT: number, t: number): void {
+function drawBase(ctx: CanvasRenderingContext2D, b: BaseState, color: string, era: number, gy: number, s: number, popT: number, t: number, wx: (x: number) => number, W: number): void {
   const w = 58 * s, hgt = (120 + era * 10) * s;
   const isP = b.side === 'player';
-  const x = b.x * s;
+  const x = wx(b.x);
+  if (x < -120 || x > W + 120) return;   // scrolled off-screen
   const bx = isP ? x - w * 0.7 : x - w * 0.3;
   const pop = 1 + Math.sin(clamp(popT, 0, 1) * Math.PI) * 0.09;
 
@@ -185,8 +212,8 @@ function drawBase(ctx: CanvasRenderingContext2D, b: BaseState, color: string, er
 }
 
 /* ------------------------------------------------------------ projectiles */
-function drawProjectile(ctx: CanvasRenderingContext2D, p: Projectile, gy: number, s: number): void {
-  const x = p.x * s, y = gy + p.y * s;
+function drawProjectile(ctx: CanvasRenderingContext2D, p: Projectile, x: number, gy: number, s: number): void {
+  const y = gy + p.y * s;
   const ang = Math.atan2(p.vy, p.vx);
   ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
   switch (p.kind) {
@@ -227,8 +254,8 @@ function drawProjectile(ctx: CanvasRenderingContext2D, p: Projectile, gy: number
 }
 
 /* ------------------------------------------------------------- specials */
-function drawSpecialFx(ctx: CanvasRenderingContext2D, fx: SpecialFx, gy: number, s: number, H: number): void {
-  const cx = fx.x * s, r = fx.radius * s;
+function drawSpecialFx(ctx: CanvasRenderingContext2D, fx: SpecialFx, cx: number, gy: number, s: number, H: number): void {
+  const r = fx.radius * s;
   const n = fx.kind === 'arrows' ? 14 : fx.kind === 'beam' ? 1 : 7;
   for (let i = 0; i < n; i++) {
     const fxr = ((i * 137) % 100) / 100;             // deterministic spread
@@ -272,112 +299,144 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
   ctx.clearRect(0, 0, W, H);
   if (engine.mode !== 'battle') return;
 
-  const s = W / LANE_W;
+  const s = W / VIEW_W;
+  lastScale = s;
   const gy = H * 0.78;
   const env = blendedEnv(dt);
   const t = engine.time;
+
+  // camera glide toward target (drag cancels the target)
+  if (camera.target != null) {
+    camera.x += (camera.target - camera.x) * clamp(dt * 7, 0, 1);
+    if (Math.abs(camera.target - camera.x) < 1) camera.target = null;
+  }
+  camera.x = clampCam(camera.x);
+  const cam = camera.x;
+  /** world x → screen x */
+  const wx = (x: number): number => (x - cam) * s;
 
   ctx.save();
   // screen shake (specials only — engine controls magnitude)
   if (engine.shake > 0.2) ctx.translate((Math.random() - 0.5) * engine.shake, (Math.random() - 0.5) * engine.shake);
 
-  // sky
+  // sky (screen-fixed)
   const sky = ctx.createLinearGradient(0, 0, 0, gy);
   sky.addColorStop(0, env.sky1); sky.addColorStop(1, env.sky2);
   ctx.fillStyle = sky; ctx.fillRect(-12, -12, W + 24, gy + 12);
-  // drifting clouds
+  // drifting clouds (slow parallax)
   ctx.fillStyle = env.props === 'neon' ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.16)';
   for (let i = 0; i < 4; i++) {
-    const cx = ((i * W / 3.2 - (t * 7) % (W + 200)) % (W + 200) + W + 200) % (W + 200) - 100;
+    const cx = ((i * W / 3.2 - (t * 7 + cam * 0.15 * s) % (W + 200)) % (W + 200) + W + 200) % (W + 200) - 100;
     const cy = gy * 0.24 + i * 20;
     ctx.beginPath();
     ctx.ellipse(cx, cy, 54 * s, 15 * s, 0, 0, TAU);
     ctx.ellipse(cx + 36 * s, cy + 5 * s, 38 * s, 12 * s, 0, 0, TAU);
     ctx.fill();
   }
-  // far mountains (hazy)
+  // far mountains (hazy, 0.35× parallax)
+  const mOff = cam * 0.35 * s;
   ctx.fillStyle = env.mtn;
   ctx.save(); ctx.globalAlpha = 0.75;
   ctx.beginPath(); ctx.moveTo(0, gy);
-  for (let x = 0; x <= W; x += 26) ctx.lineTo(x, gy - 86 * s - 66 * s * Math.abs(Math.sin(x * 0.004 + 1.3)));
+  for (let x = 0; x <= W; x += 26) ctx.lineTo(x, gy - 86 * s - 66 * s * Math.abs(Math.sin((x + mOff) * 0.004 + 1.3)));
   ctx.lineTo(W, gy); ctx.fill(); ctx.restore();
-  // near hills
+  // near hills (0.65× parallax)
+  const hOff = cam * 0.65 * s;
   ctx.fillStyle = env.hill;
   ctx.beginPath(); ctx.moveTo(0, gy);
-  for (let x = 0; x <= W; x += 26) ctx.lineTo(x, gy - 38 * s - 32 * s * Math.sin(x * 0.006 + 2));
+  for (let x = 0; x <= W; x += 26) ctx.lineTo(x, gy - 38 * s - 32 * s * Math.sin((x + hOff) * 0.006 + 2));
   ctx.lineTo(W, gy); ctx.fill();
-  drawProps(ctx, env, W, gy, s);
+  drawProps(ctx, env, gy, s, wx);
   // ground with grass lip
   const gr = ctx.createLinearGradient(0, gy, 0, H);
   gr.addColorStop(0, env.g1); gr.addColorStop(1, env.g2);
   ctx.fillStyle = gr; ctx.fillRect(-12, gy, W + 24, H - gy + 12);
   ctx.fillStyle = shade(rgbHex(env.g1), 0.18);
   ctx.fillRect(-12, gy, W + 24, 3 * s);
-  // pebbles
+  // pebbles across the full lane (world-anchored)
   ctx.fillStyle = shade(rgbHex(env.g2), -0.15);
-  for (let i = 0; i < 14; i++) {
-    const px = ((i * 761) % LANE_W) * s, py = gy + 8 * s + ((i * 353) % 40) * s * 0.5;
+  for (let i = 0; i < 34; i++) {
+    const pxw = (i * 761) % LANE_W;
+    const px = wx(pxw);
+    if (px < -20 || px > W + 20) continue;
+    const py = gy + 8 * s + ((i * 353) % 40) * s * 0.5;
     ctx.beginPath(); ctx.ellipse(px, py, (2 + (i % 3)) * s, (1.2 + (i % 2)) * s, 0, 0, TAU); ctx.fill();
   }
 
-  // bases
-  drawBase(ctx, engine.player.base, engine.campaign.theme.basePlayer, engine.player.era, gy, s, engine.player.base.popT ?? 2, t);
-  drawBase(ctx, engine.enemy.base, engine.campaign.theme.baseEnemy, engine.enemy.era, gy, s, engine.enemy.base.popT ?? 2, t);
+  // bases (culled by drawBase itself when off-screen)
+  drawBase(ctx, engine.player.base, engine.campaign.theme.basePlayer, engine.player.era, gy, s, engine.player.base.popT ?? 2, t, wx, W);
+  drawBase(ctx, engine.enemy.base, engine.campaign.theme.baseEnemy, engine.enemy.era, gy, s, engine.enemy.base.popT ?? 2, t, wx, W);
 
   // dust particles behind units
   for (const pa of engine.particles) {
     if (pa.kind !== 'dust' && pa.kind !== 'smoke') continue;
+    const px = wx(pa.x);
+    if (px < -30 || px > W + 30) continue;
     const a = clamp(1 - pa.t / pa.life, 0, 1);
     ctx.save(); ctx.globalAlpha = a * 0.55;
     ctx.fillStyle = pa.color;
-    ctx.beginPath(); ctx.arc(pa.x * s, gy + pa.y * s, pa.size * (0.7 + pa.t * 2) * s, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(px, gy + pa.y * s, pa.size * (0.7 + pa.t * 2) * s, 0, TAU); ctx.fill();
     ctx.restore();
   }
 
-  // units sorted by x for overlap depth
+  // units sorted by x for overlap depth (cull off-screen)
   const units = [...engine.units].sort((a, b) => a.x - b.x);
   for (const u of units) {
-    drawUnit(ctx, u, u.x * s, gy, s);
+    const ux = wx(u.x);
+    if (ux < -80 || ux > W + 80) continue;
+    drawUnit(ctx, u, ux, gy, s);
     // chunked unit HP bar (only when damaged)
     if (u.hp < u.def.hp && u.state !== 'die') {
       const bw = 26 * s * u.def.rig.scale;
-      chunkedBar(ctx, u.x * s - bw / 2, gy - (52 * u.def.rig.scale + (u.def.rig.kind === 'flyer' ? (u.def.rig.hover ?? 26) : 0)) * s, bw, 3.5 * s,
+      chunkedBar(ctx, ux - bw / 2, gy - (52 * u.def.rig.scale + (u.def.rig.kind === 'flyer' ? (u.def.rig.hover ?? 26) : 0)) * s, bw, 3.5 * s,
         u.hp, u.def.hp, u.side === 'player' ? '#5ef08a' : '#ff8b6b', 5, u.hitFlash);
     }
     // veteran rank pip
     if (u.veteran && u.state !== 'die') {
       const py = gy - (58 * u.def.rig.scale + (u.def.rig.kind === 'flyer' ? (u.def.rig.hover ?? 26) : 0)) * s;
-      polyS(ctx, [pt(u.x * s - 3.4 * s, py), pt(u.x * s, py - 4.4 * s), pt(u.x * s + 3.4 * s, py), pt(u.x * s, py + 1.6 * s)], '#ffd25a', 1.2);
+      polyS(ctx, [pt(ux - 3.4 * s, py), pt(ux, py - 4.4 * s), pt(ux + 3.4 * s, py), pt(ux, py + 1.6 * s)], '#ffd25a', 1.2);
     }
   }
 
   // projectiles
-  for (const p of engine.projectiles) drawProjectile(ctx, p, gy, s);
+  for (const p of engine.projectiles) {
+    const px = wx(p.x);
+    if (px < -40 || px > W + 40) continue;
+    drawProjectile(ctx, p, px, gy, s);
+  }
 
   // sparks / flashes over units
   for (const pa of engine.particles) {
     if (pa.kind === 'dust' || pa.kind === 'smoke') continue;
+    const px = wx(pa.x);
+    if (px < -30 || px > W + 30) continue;
     const a = clamp(1 - pa.t / pa.life, 0, 1);
     ctx.save(); ctx.globalAlpha = a;
     ctx.fillStyle = pa.color;
-    ctx.fillRect(pa.x * s - pa.size / 2, gy + pa.y * s - pa.size / 2, pa.size * s, pa.size * s);
+    ctx.fillRect(px - pa.size / 2, gy + pa.y * s - pa.size / 2, pa.size * s, pa.size * s);
     ctx.restore();
   }
 
   // specials
-  for (const fx of engine.specialFx) drawSpecialFx(ctx, fx, gy, s, H);
+  for (const fx of engine.specialFx) drawSpecialFx(ctx, fx, wx(fx.x), gy, s, H);
 
   // floating gold
   for (const f of engine.floats) {
+    const px = wx(f.x);
+    if (px < -60 || px > W + 60) continue;
     ctx.save(); ctx.globalAlpha = clamp(1 - f.t / 0.9, 0, 1);
     ctx.fillStyle = f.color;
     ctx.font = `bold ${12 * s}px -apple-system, sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(f.text, f.x * s, gy + f.y * s);
+    ctx.fillText(f.text, px, gy + f.y * s);
     ctx.restore();
   }
 
   ctx.restore();
+
+  // ---------- screen-fixed overlays ----------
+  drawCornerBars(ctx, W);
+  drawMinimap(ctx, W);
 
   // evolve flash overlay (full-screen white/gold, fading)
   if (engine.evolveFlash > 0) {
@@ -390,10 +449,49 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
   }
 }
 
+/** Both base HP bars pinned to the top corners — always visible even when the
+ *  bases themselves are scrolled off-screen. */
+function drawCornerBars(ctx: CanvasRenderingContext2D, W: number): void {
+  const y = 64, h = 9, w = Math.min(W * 0.24, 190);
+  const P = engine.player.base, E = engine.enemy.base;
+  chunkedBar(ctx, 12, y, w, h, P.hp, P.maxHp, P.hp / P.maxHp > 0.5 ? '#5ef08a' : P.hp / P.maxHp > 0.25 ? '#ffd25a' : '#ff6b6b', 8, P.hitT);
+  chunkedBar(ctx, W - 12 - w, y, w, h, E.hp, E.maxHp, E.hp / E.maxHp > 0.5 ? '#ff8b6b' : '#ff5a5a', 8, E.hitT);
+  ctx.fillStyle = '#ffffffcc';
+  ctx.font = 'bold 9px -apple-system, sans-serif';
+  ctx.textAlign = 'left'; ctx.fillText('YOUR BASE', 13, y - 3);
+  ctx.textAlign = 'right'; ctx.fillText('ENEMY BASE', W - 13, y - 3);
+}
+
+/** Clickable minimap strip: bases, unit dots, and the camera window. */
+function drawMinimap(ctx: CanvasRenderingContext2D, W: number): void {
+  const w = Math.min(W * 0.36, 300), h = 12;
+  const x = (W - w) / 2, y = 58;
+  minimapRect.x = x; minimapRect.y = y - 6; minimapRect.w = w; minimapRect.h = h + 12;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+  ctx.beginPath(); (ctx as any).roundRect ? (ctx as any).roundRect(x, y, w, h, 6) : ctx.rect(x, y, w, h);
+  ctx.fill(); ctx.stroke();
+  const mm = (worldX: number): number => x + (worldX / LANE_W) * w;
+  // bases
+  ctx.fillStyle = '#5ac8ff'; ctx.fillRect(mm(LANE_L) - 2, y + 2, 4, h - 4);
+  ctx.fillStyle = '#ff6b6b'; ctx.fillRect(mm(LANE_R) - 2, y + 2, 4, h - 4);
+  // units
+  for (const u of engine.units) {
+    if (u.state === 'die') continue;
+    ctx.fillStyle = u.side === 'player' ? '#7ee0ff' : '#ff8b6b';
+    ctx.fillRect(mm(u.x) - 1, y + h / 2 - 1.5, 2, 3);
+  }
+  // camera window
+  ctx.strokeStyle = '#ffd25a'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(mm(camera.x), y - 1.5, (VIEW_W / LANE_W) * w, h + 3);
+  ctx.restore();
+}
+
 /** Reset renderer transition state when a battle starts. */
 export function resetRenderState(): void {
   dispEra = engine.player ? engine.player.era - 1 : 0;
   lastFrame = 0;
+  camera.x = 0;              // open on your own base
+  camera.target = null;
 }
-
-void LANE_L; void LANE_R;

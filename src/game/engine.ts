@@ -7,12 +7,13 @@ import {
   BaseState, CampaignDef, Commander, LevelDef, Projectile, Side, SideState, Turret,
   UnitDef, UnitInstance,
 } from './types';
-import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, SUPPLY_CAP, PLAYER_INCOME, XP_TRICKLE_PLAYER, XP_TRICKLE_ENEMY, SPAWN_COOLDOWN, QUEUE_MAX, VETERAN_GOLD_BONUS } from './data';
+import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PLAYER_INCOME, XP_TRICKLE_PLAYER, XP_TRICKLE_ENEMY, SPAWN_COOLDOWN, QUEUE_MAX, VETERAN_GOLD_BONUS } from './data';
 import { defaultPose, updatePose, ATK_IMPACT } from './rig';
 import { clamp, lerp } from './primitives';
 import { sfx } from './sfx';
 
-export const LANE_W = 900;
+/** Lane is much wider than the screen — the camera scrolls to see the bases. */
+export const LANE_W = 2100;
 export const LANE_L = 52;
 export const LANE_R = LANE_W - 52;
 const SPACING = 34;
@@ -98,7 +99,8 @@ class Engine {
     this.enemy.incomePerSec = 6 * lv.incomeMul;
     this.enemy.aggro = lv.aggro;
     this.enemy.base.hp = this.enemy.base.maxHp = Math.round(this.campaign.eras[lv.startEra - 1].baseHp * lv.baseHpMul * BASE_HP_SCALE);
-    this.enemy.supplyCap = SUPPLY_CAP + (lv.maxEra - 1) * 3;
+    // both sides' supply grows as they evolve (see evolve()); the enemy starts
+    // at its floor-era cap
     this.notify();
   }
 
@@ -111,13 +113,22 @@ class Engine {
     };
     return {
       side, gold: side === 'player' ? 200 : 100, xp: 0, era, capEra,
-      supply: 0, supplyCap: SUPPLY_CAP, queue: [], spawnCd: 0,
+      supply: 0, supplyCap: supplyCapFor(era), queue: [], spawnCd: 0,
       base, specialCd: 0,
       incomePerSec: PLAYER_INCOME, aggro: 1, aiSpawnT: 1.5,
     };
   }
 
   quitToMenu(): void { this.mode = 'menu'; this.result = null; this.notify(); }
+
+  /** Most advanced friendly unit's position — camera "jump to front" anchor. */
+  frontX(): number {
+    let best = LANE_L + 140;
+    for (const u of this.units) {
+      if (u.side === 'player' && u.state !== 'die' && u.x > best) best = u.x;
+    }
+    return best;
+  }
 
   /* ------------------------------------------------------------- player actions */
   sideFor(side: Side): SideState { return side === 'player' ? this.player : this.enemy; }
@@ -174,6 +185,7 @@ class Engine {
     s.base.maxHp = Math.round(this.campaign.eras[s.era - 1].baseHp * BASE_HP_SCALE * (s.side === 'enemy' ? this.level.baseHpMul : 1));
     s.base.hp = Math.round(s.base.maxHp * Math.max(ratio, 0.5));
     s.base.slots = Math.min(4, s.base.slots + 1);
+    s.supplyCap = supplyCapFor(s.era);      // troop limit grows each era
     // evolve moment: stinger + tower scale-pop + screen flash (player's is
     // the big cinematic; the enemy's reads smaller with no forced focus)
     sfx('evolve');
