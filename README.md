@@ -1,62 +1,58 @@
 # ⚔️ EON WARS
 
-An **offline, single-file** iOS/web strategy game in the style of *Age of War* — evolve your
-civilization through the ages, spawn armies, build turrets, and crush the enemy base.
-Built to be played on a plane with **no wifi**.
+An offline *Age of War*-style lane battler — **React + TypeScript + HTML5 Canvas**, no game
+engine, no assets. Every unit is a **code-drawn procedural vector character animated on a
+skeletal rig**: bones interpolate between target poses, attacks play out as
+anticipation → strike → **impact** → recovery, and damage lands exactly on the impact frame.
 
-<img alt="EON WARS" src="icon.png" width="120" />
+<img alt="EON WARS" src="icon.png" width="110" />
 
-## ▶️ Play it
+## ▶️ Play it (offline, on a plane)
 
-It's one self-contained `index.html` — no build step, no server, no internet.
+The production build is **one self-contained file**: [`dist/index.html`](dist/index.html)
+(committed on purpose). Get it onto your phone (Files app / AirDrop / email), open in
+**Safari**, then **Share → Add to Home Screen** — fullscreen, fully offline. Best in landscape.
 
-- **On your phone (recommended):** get `index.html` onto the device (email it to yourself,
-  AirDrop, or save to the Files app), open it in **Safari**, then tap **Share → Add to Home
-  Screen**. It launches fullscreen like a real app and works 100% offline. Best in **landscape**.
-- **On a computer:** just double-click `index.html` (or drag it into any browser).
+`classic.html` is the previous emoji-art prototype, kept for posterity.
 
-> Everything is drawn with canvas + emoji, so there are zero external assets to download — it
-> runs from `file://` with no network at all.
+## 🎮 The game
 
-## 🎮 How to play
+Single-lane tug-of-war: units auto-walk and fight on contact; destroy the enemy base before
+yours falls. Gold from kills + a trickle buys units, base **turrets**, era **evolution**, and a
+charged **special** (boulder → airstrike → dragonfire → orbital laser). A **supply cap + spawn
+queue** forces spend timing over spam.
 
-- **Goal:** destroy the enemy base (right) before yours (left) falls.
-- 💰 **Gold** trickles in and drops from kills — spend it on units and turrets.
-- ⭐ **Supply** limits how many units you can field at once; bigger units cost more slots.
-- 🧬 Fill the **XP bar** and **Evolve** to unlock a stronger age with better units.
-- 🛡 Buy **Turrets** on your tower for automatic ranged defense.
-- ☄️ Charge and unleash your **Special** (meteor / airstrike / dragonfire …) to wipe a wave.
-- ⚡ Tap **1×/2×/3×** to fast-forward, **⏸** to pause.
-- 🏆 Win with lots of base HP left to earn **3 stars**.
+- **3 campaigns × 5 eras × 3 units = 45 hand-rigged units**
+  - 🗿 Rise of Man — Stone → Iron → Castle → Modern → Future
+  - 🐉 Mythic Realms — Goblins → Kingdom → Elves → Arcane → Dragons
+  - 🛸 Cosmic Frontier — Colony → Federation → Robotics → Star Fleet → Star Empire
+- **8 battles per campaign** with a fixed enemy **era window** per level (the AI mirrors your
+  roster but is capped/floored per level and evolves mid-battle)
+- **Enemy commander personalities** — Rusher, Turtle, Economist, Bombardier — same AI loop,
+  different spending weights, plus a **Warlord boss** with a unique boss unit on Last Stand
+- **Veterancy** — units that bank enough kills go veteran: **bonus gold per kill** (never stats),
+  marked with a rank pip worth protecting
+- **♾️ Endless mode** — era window scales with wave (`floor ≈ wave/3`, `cap ≈ wave/2`)
+- Progress, endless best, and sound settings persist in localStorage
 
-## 🌍 Content & replayability
+## ✨ Game feel
 
-- **3 campaigns**, each a different timeline with 5 evolving ages and unique unit rosters:
-  - 🗿 **Rise of Man** — Stone → Iron → Castle → Modern → Future
-  - 🐉 **Mythic Realms** — Goblins → Kingdom → Elves → Arcane → Dragons
-  - 🛸 **Cosmic Frontier** — Colony → Federation → Robotics → Star Fleet → Star Empire
-- **8 escalating battles** per campaign with star ratings.
-- **Roguelite loadout draft** — before each battle, pick 1 of 3 random modifiers
-  (Golden Touch, Blitz Doctrine, Fortress, Zealots, War Economy, Swarm Tactics…) for fresh runs.
-- **♾️ Endless Survival** — infinite scaling waves with a saved high score.
-- Later campaigns **unlock** as you earn stars. All progress is saved locally.
+- The world **modernizes as you evolve** — sky, hills, horizon scenery and ground **cross-fade**
+  between era palettes (rocks → trees → castles → smokestacks → neon spires), tinted per campaign
+- **Evolve cinematic**: white-gold screen flash, rising WebAudio stinger, base tower scale-pop
+- **Chunked HP bars** (units + bases) — damage knocks out discrete segments
+- **Hit-stop** on heavy/lethal impacts only; **screen shake on specials only**
+- Dust puffs, hit sparks, muzzle smoke, weapon-swing motion trails, floating gold
 
-## 🎨 Look & feel
+## 🛠 Dev
 
-Built to read like *Age of War*: a fixed, wide side-view battlefield with a single
-grounded horizon. **The world modernizes as you evolve** — each age shifts the sky, hills,
-and horizon scenery (rocks → trees → castles → smokestack skyline → glowing neon towers),
-while each campaign keeps its own color identity. Combat has punchy feedback: dust puffs
-kicked up by marching units, hit-sparks on every clash, muzzle flashes, and floating gold.
-Team-colored ground rings (blue vs red) keep both armies instantly legible.
+```bash
+npm install
+npm run dev      # vite dev server
+npm run build    # typecheck + single-file production build → dist/index.html
+```
 
-## 🛠 Tech
-
-- Pure HTML/CSS/JavaScript in a single file. Canvas rendering, `requestAnimationFrame` loop,
-  WebAudio blips for sound, `localStorage` for saves.
-- Data-driven design: campaigns, ages, units, and modifiers are just config, so it's easy to
-  add more content. A unit factory scales role archetypes (melee/fast/ranged/tank/siege) by age
-  tier to keep balance consistent.
-- `manifest.webmanifest` + `apple-touch-icon` for a native-feeling "Add to Home Screen".
-
-Enjoy the flight ✈️
+Everything is data-driven: `src/game/data.ts` holds all 45 unit defs, commanders, and level
+tables; `src/game/rig.ts` is the skeletal animation + 6 rig archetypes (biped, rider, wheeled,
+vehicle, flyer, beast); `src/game/engine.ts` is the simulation; `src/game/render.ts` the scene.
+UI/HUD is React over the canvas.

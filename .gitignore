@@ -1,0 +1,2 @@
+node_modules/
+# dist/index.html IS committed on purpose — it's the playable offline build
