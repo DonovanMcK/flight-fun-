@@ -17,7 +17,9 @@ export function UnitIcon({ def, size = 44 }: { def: UnitDef; size?: number }): J
     const iconDef: UnitDef = def.rig.kind === 'flyer' ? { ...def, rig: { ...def.rig, hover: 10 } } : def;
     const dummy: UnitInstance = {
       uid: 0, def: iconDef, side: 'player',
-      x: 0, hp: def.hp, state: 'wait',
+      x: 0, hp: def.hp, maxHp: def.hp, tier: 0,
+      stats: { dmg: def.damage, spd: def.moveSpeed, range: def.attackRange, cdMs: def.attackCooldownMs, aoe: 0 },
+      state: 'wait',
       pose: defaultPose(), animT: 0.4, walkPhase: 0.6,
       atkCd: 0, attackT: 0, didImpact: false,
       targetUid: null, targetIsBase: false,

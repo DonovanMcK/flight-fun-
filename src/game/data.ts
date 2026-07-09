@@ -3,7 +3,7 @@
  *  scaled by era so evolving always matters; values carried over from the
  *  play-tested v1 balance pass.
  */
-import { CampaignDef, Commander, EraDef, LevelDef, Role, RigConfig, SpecialDef, TurretDef, UnitDef } from './types';
+import { CampaignDef, Commander, DoctrineDef, EraDef, LevelDef, Role, RigConfig, SpecialDef, TurretDef, UnitDef } from './types';
 
 /* ------------------------------------------------------------ role bases */
 /** Move speeds tuned up ~25% for the long scrolling lane. */
@@ -92,6 +92,49 @@ export const TURRET_SLOT_COSTS = [300, 800, 2000];
 export const MAX_TURRET_SLOTS = 4;
 export const TURRET_SELL_REFUND = 0.6;
 
+/* --------------------------------------------------- unit tier upgrades (A) */
+/** In-battle tier track per unit type: I (base) → II → III.
+ *  Each tier: +30% HP, +25% dmg. Cost: 3× / 6× the unit's gold cost. */
+export const TIER_HP = 1.3;
+export const TIER_DMG = 1.25;
+export const TIER_COST_MULT = [3, 6];
+export const MAX_TIER = 2;
+export const tierCost = (unitCost: number, nextTier: number): number => Math.round(unitCost * TIER_COST_MULT[nextTier - 1]);
+
+/* ------------------------------------------------------ evolve doctrines (B) */
+/** Same math in every campaign; names/flavor differ per campaign.
+ *  Every doctrine buffs ~2 things and pays with a nerf or rider cost. */
+function doctrinePairs(campaignId: string, names: [string, string, string, string, string, string, string, string], icons: [string, string, string, string, string, string, string, string]): [DoctrineDef, DoctrineDef][] {
+  const D = (i: number, era: number, tag: DoctrineDef['tag'], good: string[], bad: string[], mods: Pick<DoctrineDef, 'unitMods' | 'allMods' | 'rider'>): DoctrineDef =>
+    ({ id: `${campaignId}-d${era}-${tag}`, era, name: names[i], icon: icons[i], tag, good, bad, ...mods });
+  return [
+    [ // evolve into era 2: Line vs Volley
+      D(0, 2, 'defensive', ['Melee & tanks +30% HP', 'Bigger shields'], ['Ranged fire 10% slower'],
+        { unitMods: { melee: { hp: 1.3 }, tank: { hp: 1.3 }, ranged: { cdMs: 1.1 } } }),
+      D(1, 2, 'aggressive', ['Ranged +25% damage, +20% range', 'Melee +15% speed'], ['Tanks −10% HP'],
+        { unitMods: { ranged: { dmg: 1.25, range: 1.2 }, melee: { spd: 1.15 }, tank: { hp: 0.9 } } }),
+    ],
+    [ // era 3: Mobility vs Siegecraft
+      D(2, 3, 'aggressive', ['Fast units +25% speed, +15% damage', 'All era-3 units +10% speed'], ['Siege −15% damage'],
+        { unitMods: { fast: { spd: 1.25, dmg: 1.15 }, siege: { dmg: 0.85 } }, allMods: { spd: 1.1 } }),
+      D(3, 3, 'defensive', ['Siege +30% damage, +15% range', 'Wider splash'], ['Fast units −10% HP'],
+        { unitMods: { siege: { dmg: 1.3, range: 1.15, aoe: 1.35 }, fast: { hp: 0.9 } } }),
+    ],
+    [ // era 4: Economy vs Arsenal
+      D(4, 4, 'defensive', ['+20% gold income', 'Era-4 units cost −10%'], ['Era-4 damage −8%'],
+        { allMods: { cost: 0.9, dmg: 0.92 }, rider: { incomeMul: 1.2 } }),
+      D(5, 4, 'aggressive', ['Era-4 units +18% damage', 'Special recharges 20% faster'], ['Income −8%'],
+        { allMods: { dmg: 1.18 }, rider: { specialCdMul: 0.8, incomeMul: 0.92 } }),
+    ],
+    [ // era 5: Apex vs Horde
+      D(6, 5, 'defensive', ['Era-5 units +25% HP, +15% damage'], ['Era-5 units cost +25%'],
+        { allMods: { hp: 1.25, dmg: 1.15, cost: 1.25 } }),
+      D(7, 5, 'aggressive', ['Era-5 units cost −20%', '+3 supply cap'], ['Era-5 units −15% HP'],
+        { allMods: { cost: 0.8, hp: 0.85 }, rider: { supplyBonus: 3 } }),
+    ],
+  ];
+}
+
 const SPECIALS: Record<string, SpecialDef> = {
   rock:   { name: 'Boulder',       icon: '🪨', dmg: 260, radius: 120, cdSec: 32, kind: 'rocks' },
   arrows: { name: 'Arrow Rain',    icon: '🏹', dmg: 330, radius: 200, cdSec: 36, kind: 'arrows' },
@@ -174,6 +217,9 @@ function riseOfMan(): CampaignDef {
     desc: 'From stone spears to plasma — the classic climb.',
     theme: { tint1: '#243b6b', tint2: '#8ea6d8', ground: '#5a6b3c', basePlayer: '#6b8e23', baseEnemy: '#8b3a3a' },
     levels: levelsFor(),
+    doctrines: doctrinePairs(c,
+      ['Shield Wall', 'Arrow Storm', 'Cavalry Charge', 'Siege Engines', 'War Economy', 'Arms Race', 'Titan Program', 'Drone Swarm'],
+      ['\u{1F6E1}\uFE0F', '\u{1F3F9}', '\u{1F40E}', '\u{1F3AF}', '\u{1F4B0}', '\u2694\uFE0F', '\u{1F9BE}', '\u{1F916}']),
     bossUnit: makeBoss(c, 'War Titan', R({ kind: 'biped', body: '#4a4a55', trim: '#8a2f2f', skin: '#6a6a75', weapon: '#2c2c34', weaponKind: 'hammer', helmet: 'visor', bulk: 2.6, scale: 1.7 })),
     eras: [
       era('Stone Age', 1, 1600, SPECIALS.rock, [
@@ -213,6 +259,9 @@ function mythicRealms(): CampaignDef {
     desc: 'Goblins, knights, arch-mages and dragons wage endless war.',
     theme: { tint1: '#2a1b45', tint2: '#7a5aa8', ground: '#3d5c3a', basePlayer: '#4a7a9e', baseEnemy: '#9e4a7a' },
     levels: levelsFor(),
+    doctrines: doctrinePairs(c,
+      ['Oathbound', 'Wild Hunt', 'Elven Grace', 'Ballista Groves', 'Golden Ledger', 'Arcane Overload', 'Dragonlords', 'Endless Brood'],
+      ['\u{1F6E1}\uFE0F', '\u{1F3F9}', '\u{1F98C}', '\u{1F38B}', '\u{1FA99}', '\u{1F52E}', '\u{1F409}', '\u{1F479}']),
     bossUnit: makeBoss(c, 'Dragon King', R({ kind: 'beast', body: '#2c2c34', trim: '#f0c040', skin: '#d9a066', weapon: '#ff8040', weaponKind: 'none', wings: true, scale: 1.9, projKind: 'fire' })),
     eras: [
       era('Goblin Warren', 1, 1600, SPECIALS.rock, [
@@ -252,6 +301,9 @@ function cosmicFrontier(): CampaignDef {
     desc: 'Colonists to star-empires — war among the void.',
     theme: { tint1: '#0a0a2a', tint2: '#3a2a6a', ground: '#3a3a4a', basePlayer: '#3aa0d0', baseEnemy: '#d05a3a' },
     levels: levelsFor(),
+    doctrines: doctrinePairs(c,
+      ['Bulwark Protocol', 'Railgun Doctrine', 'Overdrive', 'Orbital Bombardment', 'Trade Federation', 'Weapons Lab', 'Dreadnought Rising', 'Fighter Swarm'],
+      ['\u{1F6E1}\uFE0F', '\u26A1', '\u{1F680}', '\u{1F6F0}\uFE0F', '\u{1FA99}', '\u{1F52C}', '\u{1F30C}', '\u{1F6F8}']),
     bossUnit: makeBoss(c, 'Mothership', R({ kind: 'vehicle', body: '#2a1a4a', trim: '#f0c040', skin: '#c8ccd4', weapon: '#ff6bd0', weaponKind: 'none', vehicleStyle: 'hoverHull', scale: 2, projKind: 'orb' })),
     eras: [
       era('Colony', 1, 1700, SPECIALS.rock, [

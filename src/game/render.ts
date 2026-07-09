@@ -396,17 +396,25 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
   for (const u of units) {
     const ux = wx(u.x);
     if (ux < -80 || ux > W + 80) continue;
-    drawUnit(ctx, u, ux, gy, s);
-    // chunked unit HP bar (only when damaged)
-    if (u.hp < u.def.hp && u.state !== 'die') {
+    // tier III/II units render slightly bigger
+    drawUnit(ctx, u, ux, gy, s * (1 + u.tier * 0.06));
+    // chunked unit HP bar (only when damaged) — max uses resolved stats
+    if (u.hp < u.maxHp && u.state !== 'die') {
       const bw = 26 * s * u.def.rig.scale;
       chunkedBar(ctx, ux - bw / 2, gy - (52 * u.def.rig.scale + (u.def.rig.kind === 'flyer' ? (u.def.rig.hover ?? 26) : 0)) * s, bw, 3.5 * s,
-        u.hp, u.def.hp, u.side === 'player' ? '#5ef08a' : '#ff8b6b', 5, u.hitFlash);
+        u.hp, u.maxHp, u.side === 'player' ? '#5ef08a' : '#ff8b6b', 5, u.hitFlash);
     }
+    const py = gy - (58 * u.def.rig.scale + (u.def.rig.kind === 'flyer' ? (u.def.rig.hover ?? 26) : 0)) * s;
     // veteran rank pip
     if (u.veteran && u.state !== 'die') {
-      const py = gy - (58 * u.def.rig.scale + (u.def.rig.kind === 'flyer' ? (u.def.rig.hover ?? 26) : 0)) * s;
       polyS(ctx, [pt(ux - 3.4 * s, py), pt(ux, py - 4.4 * s), pt(ux + 3.4 * s, py), pt(ux, py + 1.6 * s)], '#ffd25a', 1.2);
+    }
+    // tier stars (gold dots left of the vet pip position)
+    if (u.tier > 0 && u.state !== 'die') {
+      ctx.fillStyle = '#ffd25a';
+      for (let k = 0; k < u.tier; k++) {
+        ctx.beginPath(); ctx.arc(ux - 8 * s - k * 5 * s, py, 1.8 * s, 0, TAU); ctx.fill();
+      }
     }
   }
 
@@ -449,6 +457,24 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
   // ---------- screen-fixed overlays ----------
   drawCornerBars(ctx, W);
   drawMinimap(ctx, W);
+
+  // enemy doctrine toast
+  if (engine.doctrineToast) {
+    const dt2 = engine.doctrineToast;
+    const a = dt2.t < 0.3 ? dt2.t / 0.3 : dt2.t > 2.3 ? clamp(1 - (dt2.t - 2.3) / 0.7, 0, 1) : 1;
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.font = 'bold 13px -apple-system, sans-serif';
+    const tw = ctx.measureText(dt2.text).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.strokeStyle = 'rgba(255,107,107,0.6)'; ctx.lineWidth = 1;
+    const bx2 = W / 2 - tw / 2 - 12, by2 = 84;
+    ctx.beginPath();
+    (ctx as any).roundRect ? (ctx as any).roundRect(bx2, by2, tw + 24, 26, 13) : ctx.rect(bx2, by2, tw + 24, 26);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffd9d9'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(dt2.text, W / 2, by2 + 13);
+    ctx.restore();
+  }
 
   // evolve flash overlay (full-screen white/gold, fading)
   if (engine.evolveFlash > 0) {

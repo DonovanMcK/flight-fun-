@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useState } from 'react';
 import { engine, LANE_L, LANE_R } from '../game/engine';
-import { EVOLVE_XP, TURRET_SELL_REFUND } from '../game/data';
+import { EVOLVE_XP, TURRET_SELL_REFUND, MAX_TIER, tierCost } from '../game/data';
 import { jumpCamera } from '../game/render';
 import { UnitIcon } from './UnitIcon';
 import { resumeAudio } from '../game/sfx';
@@ -19,6 +19,7 @@ function useGameTick(): void {
 export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => void }): JSX.Element {
   useGameTick();
   const [turretPanel, setTurretPanel] = useState(false);
+  const [tierPanel, setTierPanel] = useState(false);
   const P = engine.player;
   const era = engine.campaign.eras[P.era - 1];
   const nextXp = P.era < 5 ? EVOLVE_XP[P.era] : 0;
@@ -36,7 +37,10 @@ export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => vo
         <div className="res">💰 {Math.floor(P.gold)}</div>
         <div className="res">⭐ {P.supply}<small>/{P.supplyCap}</small></div>
         <div className="era-block">
-          <div className="era-name">{era.name}{engine.endless ? ` · WAVE ${engine.endlessWave + 1}` : ''}</div>
+          <div className="era-name">
+            {era.name}{engine.endless ? ` · WAVE ${engine.endlessWave + 1}` : ''}
+            {P.doctrines.filter(Boolean).map(d => <span key={d!.id} title={d!.name} className="doc-pip">{d!.icon}</span>)}
+          </div>
           <div className="xp-track"><div className="xp-fill" style={{ width: `${xpPct}%` }} /></div>
         </div>
         <div className="spacer" />
@@ -87,24 +91,54 @@ export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => vo
           )}
         </div>
       )}
+      {tierPanel && (
+        <div className="turret-panel">
+          <div className="tp-row">
+            {era.units.map(def => {
+              const tier = P.tiers[def.id] ?? 0;
+              const maxed = tier >= MAX_TIER;
+              const cost = maxed ? 0 : tierCost(def.cost, tier + 1);
+              const ok = !maxed && P.gold >= cost;
+              return (
+                <button key={def.id} className={`tp-buy ${ok ? '' : 'dis'}`} onClick={() => engine.buyTier('player', def)}>
+                  <span className="tp-ic">{'★'.repeat(tier + 1)}</span>
+                  <span className="tp-nm">{def.name} {maxed ? 'MAX' : `→ Tier ${['II', 'III'][tier]}`}</span>
+                  <span className="tp-stats">+30% HP · +25% dmg{tier === 0 ? '' : ' (again)'}</span>
+                  <span className="cost">{maxed ? '—' : `💰${cost}`}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="hud-bottom" onPointerDown={resumeAudio}>
         {era.units.map(def => {
           const ok = engine.canBuy('player', def);
+          const eff = engine.effectiveStats('player', def);
+          const tier = P.tiers[def.id] ?? 0;
           return (
             <button key={def.id} className={`card ${ok ? '' : 'dis'}`} onClick={() => engine.buyUnit('player', def)}>
               <UnitIcon def={def} />
-              <span className="nm">{def.name}</span>
-              <span className="cost">💰{def.cost} · ⭐{def.supply}</span>
+              <span className="nm">{def.name}{tier > 0 ? ' ' + '★'.repeat(tier) : ''}</span>
+              <span className="cost">💰{eff.cost} · ⭐{def.supply}</span>
             </button>
           );
         })}
         <button
           className={`card ${turretPanel ? 'sel' : ''}`}
-          onClick={() => setTurretPanel(v => !v)}
+          onClick={() => { setTurretPanel(v => !v); setTierPanel(false); }}
         >
           <span className="big-ic">🛡️</span>
           <span className="nm">Turrets {P.base.turrets.length}/{P.base.slots}</span>
           <span className="cost">{turretPanel ? 'CLOSE ▾' : 'BUILD ▴'}</span>
+        </button>
+        <button
+          className={`card ${tierPanel ? 'sel' : ''}`}
+          onClick={() => { setTierPanel(v => !v); setTurretPanel(false); }}
+        >
+          <span className="big-ic">⭐</span>
+          <span className="nm">Upgrades</span>
+          <span className="cost">{tierPanel ? 'CLOSE ▾' : 'TRAIN ▴'}</span>
         </button>
         <button className={`card evolve ${canEvolve ? 'pulse' : 'dis'}`} onClick={() => engine.evolve('player')}>
           <span className="big-ic">🧬</span>

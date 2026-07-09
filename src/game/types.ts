@@ -102,6 +102,10 @@ export interface UnitInstance {
   prevWeaponAngle: number; // for motion-trail velocity detection
   kills: number;
   veteran: boolean;       // banked enough kills → bonus gold per kill (no stat buff)
+  /** resolved stats at spawn: base def × era doctrine × unit tier */
+  maxHp: number;
+  stats: { dmg: number; spd: number; range: number; cdMs: number; aoe: number };
+  tier: number;           // 0..2 — tier at spawn (retro-bumped on upgrade)
 }
 
 export interface Projectile {
@@ -160,11 +164,17 @@ export interface SideState {
   capEra: number;              // max era this side may reach (enemy window)
   supply: number;
   supplyCap: number;
+  supplyBonus: number;         // from doctrine riders — survives evolve recalcs
   queue: QueuedSpawn[];
   spawnCd: number;             // seconds until next queued unit emerges
   base: BaseState;
   specialCd: number;           // seconds remaining
+  specialCdMul: number;        // doctrine rider
   incomePerSec: number;
+  /** doctrine chosen per era (index era-1); null = none / era 1 */
+  doctrines: (DoctrineDef | null)[];
+  /** unit tier upgrades bought this battle: defId → 0..2 */
+  tiers: Record<string, number>;
   // enemy-only knobs
   aggro: number;
   aiSpawnT: number;
@@ -197,6 +207,24 @@ export interface LevelDef {
 
 export interface SpecialDef { name: string; icon: string; dmg: number; radius: number; cdSec: number; kind: 'rocks' | 'arrows' | 'shells' | 'fire' | 'beam'; }
 
+/** Stat multipliers a doctrine applies (1 = unchanged). */
+export interface StatMods { hp?: number; dmg?: number; spd?: number; range?: number; cdMs?: number; cost?: number; aoe?: number; }
+
+/** Evolve doctrine — chosen 1-of-2 when evolving INTO an era; battle-scoped.
+ *  Affects only units OF that era (older survivors keep their own doctrines). */
+export interface DoctrineDef {
+  id: string;
+  era: number;                       // 2..5
+  name: string;                      // campaign-flavored
+  icon: string;
+  tag: 'defensive' | 'aggressive';
+  good: string[];                    // green lines on the pick card
+  bad: string[];                     // red lines
+  unitMods?: Partial<Record<Role, StatMods>>;
+  allMods?: StatMods;                // applies to every unit of this era
+  rider?: { incomeMul?: number; specialCdMul?: number; supplyBonus?: number };
+}
+
 export interface EraDef {
   name: string;
   units: UnitDef[];
@@ -218,6 +246,8 @@ export interface CampaignDef {
   theme: CampaignTheme;
   eras: EraDef[];              // 5
   levels: LevelDef[];          // 8
+  /** doctrine pairs for evolving into eras 2..5: doctrines[era-2] = [opt1, opt2] */
+  doctrines: [DoctrineDef, DoctrineDef][];
   /** enemyRosterOverride extension point — the Last Stand boss unit */
   bossUnit: UnitDef;
 }

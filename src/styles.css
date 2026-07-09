@@ -68,6 +68,21 @@ html, body, #root { margin: 0; height: 100%; overflow: hidden; background: var(-
 .tp-chip b { color: var(--gold); }
 .card.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
 
+.doc-pip { margin-left: 5px; font-size: 12px; filter: drop-shadow(0 1px 2px #000); }
+
+/* doctrine choice overlay */
+.doctrine-overlay { z-index: 30; }
+.doc-cards { display: flex; gap: 14px; width: min(94vw, 560px); }
+.doc-card { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 18px 12px; border-radius: 18px; cursor: pointer; color: var(--txt);
+  background: linear-gradient(170deg, #283154, #151b2e); border: 1.5px solid var(--accent); }
+.doc-card:active { transform: scale(0.97); }
+.doc-card:hover { border-color: var(--gold); }
+.doc-ic { font-size: 34px; }
+.doc-name { font-size: 17px; font-weight: 900; margin-bottom: 4px; }
+.doc-good { font-size: 12px; color: #5ef08a; font-weight: 700; }
+.doc-bad { font-size: 12px; color: #ff8b6b; font-weight: 700; }
+
 .queue-pips { position: absolute; left: 12px; bottom: 108px; display: flex; gap: 4px; pointer-events: none; }
 .pip { width: 18px; height: 18px; border-radius: 50%; background: #000b; border: 1px solid var(--line);
   color: var(--gold); font-size: 10px; font-weight: 800; display: grid; place-items: center; }

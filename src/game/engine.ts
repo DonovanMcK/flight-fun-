@@ -4,10 +4,10 @@
  *  state-enter. React reads snapshots via subscribe().
  */
 import {
-  BaseState, CampaignDef, Commander, LevelDef, Projectile, Side, SideState, Turret, TurretDef,
+  BaseState, CampaignDef, Commander, DoctrineDef, LevelDef, Projectile, Side, SideState, StatMods, Turret, TurretDef,
   UnitDef, UnitInstance,
 } from './types';
-import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PLAYER_INCOME, XP_TRICKLE_PLAYER, XP_TRICKLE_ENEMY, SPAWN_COOLDOWN, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND } from './data';
+import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PLAYER_INCOME, XP_TRICKLE_PLAYER, XP_TRICKLE_ENEMY, SPAWN_COOLDOWN, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND, TIER_HP, TIER_DMG, MAX_TIER, tierCost } from './data';
 import { defaultPose, updatePose, ATK_IMPACT } from './rig';
 import { clamp, lerp } from './primitives';
 import { sfx } from './sfx';
@@ -71,6 +71,10 @@ class Engine {
   /** full-screen white/gold flash on evolve, fading */
   evolveFlash = 0;
   commander: Commander = COMMANDERS.rusher;
+  /** player evolve gate: the 1-of-2 doctrine cards awaiting a pick (sim freezes) */
+  pendingDoctrines: [DoctrineDef, DoctrineDef] | null = null;
+  /** canvas toast when the ENEMY adopts a doctrine */
+  doctrineToast: { text: string; t: number } | null = null;
 
   save: SaveData = loadSave();
 
@@ -91,12 +95,13 @@ class Engine {
     this.mode = 'battle'; this.result = null; this.paused = false; this.speed = 1; this.time = 0;
     this.units = []; this.projectiles = []; this.particles = []; this.floats = []; this.specialFx = [];
     this.shake = 0; this.hitStop = 0; this.evolveFlash = 0;
+    this.pendingDoctrines = null; this.doctrineToast = null;
     this.commander = COMMANDERS[this.level.commanderId] ?? COMMANDERS.rusher;
 
     this.player = this.makeSide('player', 1, 5);
     const lv = this.level;
     this.enemy = this.makeSide('enemy', lv.startEra, lv.maxEra);
-    this.enemy.incomePerSec = 6 * lv.incomeMul;
+    this.enemy.incomePerSec = 6.5 * lv.incomeMul;
     this.enemy.aggro = lv.aggro;
     this.enemy.base.hp = this.enemy.base.maxHp = Math.round(this.campaign.eras[lv.startEra - 1].baseHp * lv.baseHpMul * BASE_HP_SCALE);
     // both sides' supply grows as they evolve (see evolve()); the enemy starts
@@ -113,9 +118,11 @@ class Engine {
     };
     return {
       side, gold: side === 'player' ? 200 : 100, xp: 0, era, capEra,
-      supply: 0, supplyCap: supplyCapFor(era), queue: [], spawnCd: 0,
-      base, specialCd: 0,
-      incomePerSec: PLAYER_INCOME, aggro: 1, aiSpawnT: 1.5,
+      supply: 0, supplyCap: supplyCapFor(era), supplyBonus: 0, queue: [], spawnCd: 0,
+      base, specialCd: 0, specialCdMul: 1,
+      incomePerSec: PLAYER_INCOME,
+      doctrines: [null, null, null, null, null], tiers: {},
+      aggro: 1, aiSpawnT: 1.5,
     };
   }
 
@@ -135,9 +142,31 @@ class Engine {
 
   queuedSupply(s: SideState): number { return s.queue.reduce((a, q) => a + q.def.supply, 0); }
 
+  /** Resolve a unit's battle stats: base def × era doctrine × bought tier.
+   *  Doctrines touch only units OF their era; tiers only their unit type. */
+  effectiveStats(side: Side, def: UnitDef): { cost: number; hp: number; dmg: number; spd: number; range: number; cdMs: number; aoe: number } {
+    const s = this.sideFor(side);
+    let hp = def.hp, dmg = def.damage, spd = def.moveSpeed, range = def.attackRange, cdMs = def.attackCooldownMs, cost = def.cost;
+    let aoe = def.role === 'siege' ? 44 : 0;
+    const doc = s.doctrines[def.era - 1];
+    if (doc) {
+      const apply = (m?: StatMods): void => {
+        if (!m) return;
+        hp *= m.hp ?? 1; dmg *= m.dmg ?? 1; spd *= m.spd ?? 1;
+        range *= m.range ?? 1; cdMs *= m.cdMs ?? 1; cost *= m.cost ?? 1; aoe *= m.aoe ?? 1;
+      };
+      apply(doc.allMods);
+      apply(doc.unitMods?.[def.role]);
+    }
+    const tier = s.tiers[def.id] ?? 0;
+    hp *= Math.pow(TIER_HP, tier);
+    dmg *= Math.pow(TIER_DMG, tier);
+    return { cost: Math.round(cost), hp: Math.round(hp), dmg: Math.round(dmg), spd, range, cdMs, aoe };
+  }
+
   canBuy(side: Side, def: UnitDef): boolean {
     const s = this.sideFor(side);
-    return s.gold >= def.cost && s.queue.length < QUEUE_MAX &&
+    return s.gold >= this.effectiveStats(side, def).cost && s.queue.length < QUEUE_MAX &&
       s.supply + this.queuedSupply(s) + def.supply <= s.supplyCap;
   }
 
@@ -145,9 +174,33 @@ class Engine {
     if (this.mode !== 'battle' || this.result) return false;
     const s = this.sideFor(side);
     if (!this.canBuy(side, def)) return false;
-    s.gold -= def.cost;
+    s.gold -= this.effectiveStats(side, def).cost;
     s.queue.push({ def });
     if (side === 'player') sfx('spawn');
+    this.notify();
+    return true;
+  }
+
+  /** Tier upgrade (I→II→III) for one unit type — applies to living units too
+   *  (they keep their HP percentage) and all future spawns. */
+  buyTier(side: Side, def: UnitDef): boolean {
+    const s = this.sideFor(side);
+    const cur = s.tiers[def.id] ?? 0;
+    if (cur >= MAX_TIER) return false;
+    const cost = tierCost(def.cost, cur + 1);
+    if (s.gold < cost) return false;
+    s.gold -= cost;
+    s.tiers[def.id] = cur + 1;
+    for (const u of this.units) {
+      if (u.side !== side || u.def.id !== def.id || u.state === 'die') continue;
+      const frac = u.hp / u.maxHp;
+      u.maxHp = Math.round(u.maxHp * TIER_HP);
+      u.hp = Math.round(u.maxHp * frac);
+      u.stats.dmg = Math.round(u.stats.dmg * TIER_DMG);
+      u.tier = cur + 1;
+      this.burst(u.x, -40 * u.def.rig.scale, 5, '#ffd25a', 'spark');
+    }
+    if (side === 'player') sfx('evolve');
     this.notify();
     return true;
   }
@@ -199,15 +252,52 @@ class Engine {
     return s.era < s.capEra && s.xp >= EVOLVE_XP[s.era];
   }
 
+  /** Player path: evolving opens the 1-of-2 doctrine pick (sim freezes until
+   *  chosen). Enemy path: commander auto-picks and evolves immediately. */
   evolve(side: Side): boolean {
-    const s = this.sideFor(side);
     if (!this.canEvolve(side)) return false;
+    const s = this.sideFor(side);
+    if (side === 'player') {
+      this.pendingDoctrines = this.campaign.doctrines[s.era - 1]; // pair for era s.era+1
+      this.notify();
+      return true;
+    }
+    // enemy: pick by personality (aggressive commanders take the aggressive card)
+    const pair = this.campaign.doctrines[s.era - 1];
+    const wantAggro = ['rusher', 'siegeSpammer', 'boss'].includes(this.commander.id);
+    const pick = Math.random() < 0.8
+      ? pair.find(d => (d.tag === 'aggressive') === wantAggro) ?? pair[0]
+      : pair[(Math.random() * 2) | 0];
+    this.applyDoctrine(s, pick);
+    this.doctrineToast = { text: `Enemy adopts ${pick.icon} ${pick.name}!`, t: 0 };
+    return this.evolveNow(side);
+  }
+
+  /** Player's doctrine pick from the overlay → evolve proceeds. */
+  chooseDoctrine(d: DoctrineDef): void {
+    if (!this.pendingDoctrines) return;
+    this.pendingDoctrines = null;
+    this.applyDoctrine(this.player, d);
+    this.evolveNow('player');
+  }
+
+  private applyDoctrine(s: SideState, d: DoctrineDef): void {
+    s.doctrines[d.era - 1] = d;
+    if (d.rider) {
+      s.incomePerSec *= d.rider.incomeMul ?? 1;
+      s.specialCdMul *= d.rider.specialCdMul ?? 1;
+      s.supplyBonus += d.rider.supplyBonus ?? 0;
+    }
+  }
+
+  private evolveNow(side: Side): boolean {
+    const s = this.sideFor(side);
     s.xp -= EVOLVE_XP[s.era];
     s.era++;
     const ratio = s.base.hp / s.base.maxHp;
     s.base.maxHp = Math.round(this.campaign.eras[s.era - 1].baseHp * BASE_HP_SCALE * (s.side === 'enemy' ? this.level.baseHpMul : 1));
     s.base.hp = Math.round(s.base.maxHp * Math.max(ratio, 0.5));
-    s.supplyCap = supplyCapFor(s.era);      // troop limit grows each era (slots are bought, not granted)
+    s.supplyCap = supplyCapFor(s.era) + s.supplyBonus;  // troop limit grows each era
     // evolve moment: stinger + tower scale-pop + screen flash (player's is
     // the big cinematic; the enemy's reads smaller with no forced focus)
     sfx('evolve');
@@ -222,7 +312,7 @@ class Engine {
     const s = this.sideFor(side);
     if (s.specialCd > 0 || this.result) return false;
     const sp = this.campaign.eras[s.era - 1].special;
-    s.specialCd = sp.cdSec;
+    s.specialCd = sp.cdSec * s.specialCdMul;
     const foeSide: Side = side === 'player' ? 'enemy' : 'player';
     const foes = this.units.filter(u => u.side === foeSide && u.state !== 'die');
     let cx: number;
@@ -259,11 +349,14 @@ class Engine {
   /* ------------------------------------------------------------- combat */
   private spawnUnit(side: Side, def: UnitDef): void {
     const s = this.sideFor(side);
+    const eff = this.effectiveStats(side, def);
     const u: UnitInstance = {
       uid: this.uidSeq++,
       def, side,
       x: side === 'player' ? LANE_L + 14 : LANE_R - 14,
-      hp: def.hp,
+      hp: eff.hp, maxHp: eff.hp,
+      stats: { dmg: eff.dmg, spd: eff.spd, range: eff.range, cdMs: eff.cdMs, aoe: eff.aoe },
+      tier: s.tiers[def.id] ?? 0,
       state: 'walk',
       pose: defaultPose(),
       animT: Math.random() * 10,
@@ -367,7 +460,7 @@ class Engine {
     for (const o of this.units) {
       if (o.side === u.side || o.state === 'die') continue;
       const d = (o.x - u.x) * dir;
-      if (d >= -8 && Math.abs(o.x - u.x) <= u.def.attackRange && Math.abs(o.x - u.x) < bd) {
+      if (d >= -8 && Math.abs(o.x - u.x) <= u.stats.range && Math.abs(o.x - u.x) < bd) {
         best = o; bd = Math.abs(o.x - u.x);
       }
     }
@@ -391,8 +484,8 @@ class Engine {
       vx: dir * speed,
       vy: -0.5 * g * tof,
       gravity: g,
-      damage: u.def.damage,
-      aoe: u.def.role === 'siege' ? 44 : 0,
+      damage: u.stats.dmg,
+      aoe: u.stats.aoe,
       kind,
       targetUid: isBase ? null : target!.uid,
       targetIsBase: isBase,
@@ -435,6 +528,14 @@ class Engine {
     // sell outdated turrets (2+ eras behind) to rebuild with current tech
     const stale = E.base.turrets.findIndex(tr => tr.era <= E.era - 2);
     if (stale >= 0 && Math.random() < dt * 0.1 * cmd.turretInvestment) this.sellTurret('enemy', stale);
+    // tier upgrades when gold pools (the Economist and the Warlord love these)
+    const tierChance = cmd.id === 'economist' || cmd.boss ? 0.14 : 0.05;
+    if (Math.random() < dt * tierChance) {
+      const eraUnits = this.campaign.eras[E.era - 1].units;
+      const candidate = eraUnits[(Math.random() * eraUnits.length) | 0];
+      const cur = E.tiers[candidate.id] ?? 0;
+      if (cur < MAX_TIER && E.gold > tierCost(candidate.cost, cur + 1) * 1.8) this.buyTier('enemy', candidate);
+    }
     // special usage when there's a push worth resetting
     const playerPush = this.units.filter(u => u.side === 'player' && u.state !== 'die').length;
     if (E.specialCd <= 0 && playerPush >= 4 && Math.random() < dt * 0.35 * cmd.specialAggression) {
@@ -479,6 +580,9 @@ class Engine {
     // visual timers keep decaying even during hit-stop
     this.shake = Math.max(0, this.shake - dt * 26);
     this.evolveFlash = Math.max(0, this.evolveFlash - dt * 1.4);
+    if (this.doctrineToast) { this.doctrineToast.t += dt; if (this.doctrineToast.t > 3) this.doctrineToast = null; }
+    // doctrine pick pending → the world holds its breath
+    if (this.pendingDoctrines) return;
     // hit-stop: freeze the sim for a couple frames on heavy/lethal impacts
     if (this.hitStop > 0) { this.hitStop -= dt; return; }
     this.time += dt;
@@ -518,10 +622,10 @@ class Engine {
       const foeBase = this.sideFor(foeSide).base;
       const dir = u.side === 'player' ? 1 : -1;
       const target = this.findTarget(u);
-      const baseInRange = foeBase.hp > 0 && Math.abs(foeBase.x - u.x) <= u.def.attackRange;
+      const baseInRange = foeBase.hp > 0 && Math.abs(foeBase.x - u.x) <= u.stats.range;
 
       if (u.state === 'attack') {
-        const cycle = Math.max(0.45, u.def.attackCooldownMs / 1000);
+        const cycle = Math.max(0.45, u.stats.cdMs / 1000);
         u.attackT += dt / cycle;
         // impact frame — apply damage exactly once per cycle
         if (!u.didImpact && u.attackT >= ATK_IMPACT) {
@@ -530,11 +634,11 @@ class Engine {
           const tgt = u.targetUid != null ? this.units.find(o => o.uid === u.targetUid && o.state !== 'die') ?? null : null;
           if (u.targetIsBase && baseInRange) {
             if (isRangedLike && Math.abs(foeBase.x - u.x) > 60) this.fireProjectile(u, null, true);
-            else { this.damageBase(foeSide, u.def.damage); this.burst(foeBase.x - dir * 8, -60, 5, '#ffd25a', 'spark'); sfx('hit'); }
-          } else if (tgt && Math.abs(tgt.x - u.x) <= u.def.attackRange + 10) {
+            else { this.damageBase(foeSide, u.stats.dmg); this.burst(foeBase.x - dir * 8, -60, 5, '#ffd25a', 'spark'); sfx('hit'); }
+          } else if (tgt && Math.abs(tgt.x - u.x) <= u.stats.range + 10) {
             if (isRangedLike && Math.abs(tgt.x - u.x) > 60) this.fireProjectile(u, tgt, false);
             else {
-              this.damageUnit(tgt, u.def.damage, u.side, u);
+              this.damageUnit(tgt, u.stats.dmg, u.side, u);
               this.burst((u.x + tgt.x) / 2, -24 * u.def.rig.scale, 6, '#ffe08a', 'spark');
               if (u.def.role === 'siege' || u.def.role === 'tank') {
                 // heavy bash: dust + a touch of hit-stop (NO screen shake here)
@@ -557,9 +661,9 @@ class Engine {
         else if (baseInRange && !this.frontBlocked(u)) { u.state = 'attack'; u.targetUid = null; u.targetIsBase = true; u.attackT = 0; u.didImpact = false; }
         else if (!this.frontBlocked(u)) {
           u.state = 'walk';
-          u.x += dir * u.def.moveSpeed * dt;
+          u.x += dir * u.stats.spd * dt;
           u.x = clamp(u.x, LANE_L - 6, LANE_R + 6);
-          u.walkPhase += dt * u.def.moveSpeed * 0.12;
+          u.walkPhase += dt * u.stats.spd * 0.12;
           if (Math.random() < dt * 6 && u.def.rig.kind !== 'flyer') {
             this.particles.push({
               x: u.x - dir * 8, y: -2, vx: -dir * 12 + (Math.random() - 0.5) * 14, vy: -14 - Math.random() * 16,

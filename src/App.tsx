@@ -64,6 +64,22 @@ export default function App(): JSX.Element {
       {inBattle && !engine.result && !paused && (
         <HUD onPause={() => { setPaused(true); engine.paused = true; }} onQuit={quit} />
       )}
+      {inBattle && engine.pendingDoctrines && !paused && (
+        <div className="overlay doctrine-overlay">
+          <h2>Choose a Doctrine</h2>
+          <div className="tag">Shapes every {engine.campaign.eras[engine.player.era].name} unit this battle</div>
+          <div className="doc-cards">
+            {engine.pendingDoctrines.map(d => (
+              <button key={d.id} className="doc-card" onClick={() => engine.chooseDoctrine(d)}>
+                <span className="doc-ic">{d.icon}</span>
+                <span className="doc-name">{d.name}</span>
+                {d.good.map((g, i) => <span key={i} className="doc-good">▲ {g}</span>)}
+                {d.bad.map((b, i) => <span key={i} className="doc-bad">▼ {b}</span>)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {inBattle && paused && (
         <PauseMenu
           onResume={() => { setPaused(false); engine.paused = false; }}
