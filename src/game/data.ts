@@ -3,7 +3,7 @@
  *  scaled by era so evolving always matters; values carried over from the
  *  play-tested v1 balance pass.
  */
-import { CampaignDef, Commander, EraDef, LevelDef, Role, RigConfig, SpecialDef, UnitDef } from './types';
+import { CampaignDef, Commander, EraDef, LevelDef, Role, RigConfig, SpecialDef, TurretDef, UnitDef } from './types';
 
 /* ------------------------------------------------------------ role bases */
 /** Move speeds tuned up ~25% for the long scrolling lane. */
@@ -73,10 +73,24 @@ function makeBoss(campaign: string, name: string, rig: RigConfig): UnitDef {
   };
 }
 
-const turretFor = (era: number) => {
+/** 3 turret options per era, cheap → expensive, mirroring Age of War's
+ *  Slingshot / Catapult / Ion-Cannon ladder:
+ *  Rapid = cheap fast single-target · Splash = slow AoE lobber ·
+ *  Sniper = long-range heavy single hit (era 5 sniper almost reaches mid-lane). */
+const turretsFor = (era: number): TurretDef[] => {
   const s = eraScale(era - 1);
-  return { damage: Math.round(24 * s.dmg), range: 280, cooldownMs: 850, cost: Math.round(180 * s.cost) };
+  return [
+    { kind: 'rapid', name: 'Rapid', icon: '⚡', damage: Math.round(10 * s.dmg), range: 250 + era * 12, cooldownMs: 380, cost: Math.round(120 * s.cost), aoe: 0, proj: 'bullet' },
+    { kind: 'heavy', name: 'Splash', icon: '💥', damage: Math.round(42 * s.dmg), range: 290 + era * 12, cooldownMs: 1900, cost: Math.round(260 * s.cost), aoe: 52, proj: 'shell' },
+    { kind: 'sniper', name: 'Sniper', icon: '🎯', damage: Math.round(85 * s.dmg), range: 400 + era * 24, cooldownMs: 2600, cost: Math.round(480 * s.cost), aoe: 0, proj: 'beam' },
+  ];
 };
+
+/** Extra turret slots are bought with gold (start with 1, max 4) — the
+ *  escalating-cost ladder from Age of War, scaled to this economy. */
+export const TURRET_SLOT_COSTS = [300, 800, 2000];
+export const MAX_TURRET_SLOTS = 4;
+export const TURRET_SELL_REFUND = 0.6;
 
 const SPECIALS: Record<string, SpecialDef> = {
   rock:   { name: 'Boulder',       icon: '🪨', dmg: 260, radius: 120, cdSec: 32, kind: 'rocks' },
@@ -96,26 +110,31 @@ export const COMMANDERS: Record<string, Commander> = {
     id: 'rusher', name: 'The Rusher',
     spawnRateMul: 1.6, roleWeights: W(3, 3, 1, 0.3, 0.1),
     evolveAggression: 0.6, turretInvestment: 0.3, specialAggression: 0.5,
+    turretPref: { rapid: 3, heavy: 1, sniper: 0.2 },
   },
   turtle: {
     id: 'turtle', name: 'The Turtle',
     spawnRateMul: 0.75, roleWeights: W(1, 0.3, 1.2, 3, 0.8),
     evolveAggression: 1.1, turretInvestment: 2.5, specialAggression: 0.8,
+    turretPref: { rapid: 1, heavy: 3, sniper: 2 },
   },
   economist: {
     id: 'economist', name: 'The Economist',
     spawnRateMul: 0.6, roleWeights: W(1, 0.8, 1.2, 1.5, 1.5),
     evolveAggression: 1.8, turretInvestment: 1, specialAggression: 1,
+    turretPref: { rapid: 0.5, heavy: 1, sniper: 3 },
   },
   siegeSpammer: {
     id: 'siegeSpammer', name: 'The Bombardier',
     spawnRateMul: 1, roleWeights: W(1.6, 0.4, 2, 0.5, 3),
     evolveAggression: 1, turretInvestment: 1, specialAggression: 1.2,
+    turretPref: { rapid: 2, heavy: 2, sniper: 0.5 },
   },
   boss: {
     id: 'boss', name: 'The Warlord',
     spawnRateMul: 1.15, roleWeights: W(1, 0.7, 1.3, 2, 2),
     evolveAggression: 1.6, turretInvestment: 2, specialAggression: 1.6,
+    turretPref: { rapid: 1, heavy: 2, sniper: 3 },
     boss: true,
   },
 };
@@ -139,7 +158,7 @@ function levelsFor(): LevelDef[] {
 }
 
 function era(name: string, eraIdx: number, baseHp: number, special: SpecialDef, units: UnitDef[]): EraDef {
-  return { name, units, turret: turretFor(eraIdx), evolveXp: EVOLVE_XP[eraIdx - 1], baseHp, special };
+  return { name, units, turrets: turretsFor(eraIdx), evolveXp: EVOLVE_XP[eraIdx - 1], baseHp, special };
 }
 
 /* ============================================================= campaigns */

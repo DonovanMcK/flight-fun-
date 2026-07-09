@@ -46,6 +46,28 @@ html, body, #root { margin: 0; height: 100%; overflow: hidden; background: var(-
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 #ffd25a44; } 50% { box-shadow: 0 0 0 6px #ffd25a00; } }
 .radial { display: grid; place-items: center; border-radius: 50%;
   background: conic-gradient(#ffd25a calc(var(--p) * 360deg), #0006 0); padding: 3px; }
+/* turret picker panel — docks just above the shop bar */
+.turret-panel { pointer-events: auto; margin: auto 8px 2px; padding: 8px; border-radius: 16px;
+  background: #0d1220ee; border: 1px solid var(--line); backdrop-filter: blur(6px);
+  display: flex; flex-direction: column; gap: 7px; }
+.turret-panel + .hud-bottom { margin-top: 0; }
+.tp-row { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; align-items: stretch; }
+.tp-row::-webkit-scrollbar { display: none; }
+.tp-buy { flex: 1 0 110px; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  background: linear-gradient(180deg, #232c44, #161d30); border: 1px solid var(--line);
+  border-radius: 12px; padding: 7px 6px; color: var(--txt); cursor: pointer; }
+.tp-buy:active { transform: scale(0.96); }
+.tp-buy.dis { opacity: 0.42; }
+.tp-buy.slot { border-style: dashed; }
+.tp-ic { font-size: 20px; }
+.tp-nm { font-size: 12px; font-weight: 800; }
+.tp-stats { font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+.tp-label { font-size: 10px; font-weight: 800; color: var(--muted); align-self: center; }
+.tp-chip { background: #0006; border: 1px solid var(--line); border-radius: 20px; color: var(--txt);
+  padding: 5px 10px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.tp-chip b { color: var(--gold); }
+.card.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+
 .queue-pips { position: absolute; left: 12px; bottom: 108px; display: flex; gap: 4px; pointer-events: none; }
 .pip { width: 18px; height: 18px; border-radius: 50%; background: #000b; border: 1px solid var(--line);
   color: var(--gold); font-size: 10px; font-weight: 800; display: grid; place-items: center; }

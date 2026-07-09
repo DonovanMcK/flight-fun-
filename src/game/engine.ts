@@ -4,10 +4,10 @@
  *  state-enter. React reads snapshots via subscribe().
  */
 import {
-  BaseState, CampaignDef, Commander, LevelDef, Projectile, Side, SideState, Turret,
+  BaseState, CampaignDef, Commander, LevelDef, Projectile, Side, SideState, Turret, TurretDef,
   UnitDef, UnitInstance,
 } from './types';
-import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PLAYER_INCOME, XP_TRICKLE_PLAYER, XP_TRICKLE_ENEMY, SPAWN_COOLDOWN, QUEUE_MAX, VETERAN_GOLD_BONUS } from './data';
+import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PLAYER_INCOME, XP_TRICKLE_PLAYER, XP_TRICKLE_ENEMY, SPAWN_COOLDOWN, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND } from './data';
 import { defaultPose, updatePose, ATK_IMPACT } from './rig';
 import { clamp, lerp } from './primitives';
 import { sfx } from './sfx';
@@ -109,7 +109,7 @@ class Engine {
       side, x: side === 'player' ? LANE_L : LANE_R,
       hp: Math.round(this.campaign.eras[era - 1].baseHp * BASE_HP_SCALE),
       maxHp: Math.round(this.campaign.eras[era - 1].baseHp * BASE_HP_SCALE),
-      turrets: [], slots: 2, hitT: 0, popT: 2,
+      turrets: [], slots: 1, hitT: 0, popT: 2,
     };
     return {
       side, gold: side === 'player' ? 200 : 100, xp: 0, era, capEra,
@@ -152,21 +152,44 @@ class Engine {
     return true;
   }
 
-  buyTurret(side: Side): boolean {
+  /** Build a specific turret type into a free slot. */
+  buyTurret(side: Side, def: TurretDef): boolean {
     const s = this.sideFor(side);
-    const t = this.campaign.eras[s.era - 1].turret;
-    if (s.gold < t.cost) return false;
-    const nt: Turret = { era: s.era, damage: t.damage, range: t.range, cooldownMs: t.cooldownMs, cd: 0 };
-    if (s.base.turrets.length < s.base.slots) {
-      s.base.turrets.push(nt);
-    } else {
-      // upgrade: replace the oldest-era turret if we outrank it
-      const idx = s.base.turrets.findIndex(x => x.era < s.era);
-      if (idx < 0) return false;
-      s.base.turrets[idx] = nt;
-    }
-    s.gold -= t.cost;
+    if (s.gold < def.cost || s.base.turrets.length >= s.base.slots) return false;
+    s.base.turrets.push({ def, era: s.era, cd: 0 });
+    s.gold -= def.cost;
     if (side === 'player') sfx('build');
+    this.notify();
+    return true;
+  }
+
+  nextSlotCost(side: Side): number | null {
+    const s = this.sideFor(side);
+    if (s.base.slots >= MAX_TURRET_SLOTS) return null;
+    return TURRET_SLOT_COSTS[s.base.slots - 1];
+  }
+
+  /** Buy an extra turret slot (escalating cost, max 4 — Age of War style). */
+  buySlot(side: Side): boolean {
+    const s = this.sideFor(side);
+    const cost = this.nextSlotCost(side);
+    if (cost == null || s.gold < cost) return false;
+    s.gold -= cost;
+    s.base.slots++;
+    if (side === 'player') sfx('build');
+    this.notify();
+    return true;
+  }
+
+  /** Sell a built turret for a partial refund — frees the slot for a
+   *  newer-era or different-type turret. */
+  sellTurret(side: Side, idx: number): boolean {
+    const s = this.sideFor(side);
+    const tr = s.base.turrets[idx];
+    if (!tr) return false;
+    s.base.turrets.splice(idx, 1);
+    s.gold += Math.round(tr.def.cost * TURRET_SELL_REFUND);
+    if (side === 'player') sfx('spawn');
     this.notify();
     return true;
   }
@@ -184,8 +207,7 @@ class Engine {
     const ratio = s.base.hp / s.base.maxHp;
     s.base.maxHp = Math.round(this.campaign.eras[s.era - 1].baseHp * BASE_HP_SCALE * (s.side === 'enemy' ? this.level.baseHpMul : 1));
     s.base.hp = Math.round(s.base.maxHp * Math.max(ratio, 0.5));
-    s.base.slots = Math.min(4, s.base.slots + 1);
-    s.supplyCap = supplyCapFor(s.era);      // troop limit grows each era
+    s.supplyCap = supplyCapFor(s.era);      // troop limit grows each era (slots are bought, not granted)
     // evolve moment: stinger + tower scale-pop + screen flash (player's is
     // the big cinematic; the enemy's reads smaller with no forced focus)
     sfx('evolve');
@@ -395,11 +417,24 @@ class Engine {
     const cmd = this.commander;
     // evolve up the window when XP allows
     if (this.canEvolve('enemy')) this.evolve('enemy');
-    // turret buys — investment-weighted
-    const t = this.campaign.eras[E.era - 1].turret;
-    if (E.base.turrets.length < Math.min(E.era, E.base.slots) && E.gold > t.cost * 1.4 && Math.random() < dt * 0.25 * cmd.turretInvestment) {
-      this.buyTurret('enemy');
+    // turret buys — type weighted by commander preference; slots bought when rich
+    if (E.base.turrets.length < E.base.slots && Math.random() < dt * 0.25 * cmd.turretInvestment) {
+      const options = this.campaign.eras[E.era - 1].turrets.filter(td => E.gold > td.cost * 1.4);
+      if (options.length) {
+        const total = options.reduce((a, td) => a + (cmd.turretPref[td.kind] ?? 1), 0);
+        let roll = Math.random() * total;
+        let pick = options[0];
+        for (const td of options) { roll -= cmd.turretPref[td.kind] ?? 1; if (roll <= 0) { pick = td; break; } }
+        this.buyTurret('enemy', pick);
+      }
     }
+    const slotCost = this.nextSlotCost('enemy');
+    if (slotCost != null && E.base.turrets.length >= E.base.slots && E.gold > slotCost * 2.2 && Math.random() < dt * 0.12 * cmd.turretInvestment) {
+      this.buySlot('enemy');
+    }
+    // sell outdated turrets (2+ eras behind) to rebuild with current tech
+    const stale = E.base.turrets.findIndex(tr => tr.era <= E.era - 2);
+    if (stale >= 0 && Math.random() < dt * 0.1 * cmd.turretInvestment) this.sellTurret('enemy', stale);
     // special usage when there's a push worth resetting
     const playerPush = this.units.filter(u => u.side === 'player' && u.state !== 'die').length;
     if (E.specialCd <= 0 && playerPush >= 4 && Math.random() < dt * 0.35 * cmd.specialAggression) {
@@ -580,7 +615,7 @@ class Engine {
     }
     this.projectiles = this.projectiles.filter(p => !p.dead);
 
-    // turrets
+    // turrets — each fires per its own def (rapid / splash-AoE / sniper)
     for (const s of [P, E]) {
       for (const tr of s.base.turrets) {
         tr.cd -= dt * 1000;
@@ -589,14 +624,20 @@ class Engine {
         for (const o of this.units) {
           if (o.side === s.side || o.state === 'die') continue;
           const d = Math.abs(o.x - s.base.x);
-          if (d <= tr.range && d < bd) { best = o; bd = d; }
+          if (d <= tr.def.range && d < bd) { best = o; bd = d; }
         }
         if (best) {
-          tr.cd = tr.cooldownMs;
+          tr.cd = tr.def.cooldownMs;
+          const dir = s.side === 'player' ? 1 : -1;
+          const arc = tr.def.kind === 'heavy';
+          const speed = tr.def.kind === 'sniper' ? 760 : arc ? 300 : 540;
+          const tof = Math.abs(best.x - s.base.x) / speed;
           this.projectiles.push({
-            side: s.side, x: s.base.x + (s.side === 'player' ? 10 : -10), y: -105,
-            vx: (s.side === 'player' ? 1 : -1) * 520, vy: 30, gravity: 0,
-            damage: tr.damage, aoe: 0, kind: 'bolt',
+            side: s.side, x: s.base.x + dir * 10, y: -105,
+            vx: dir * speed,
+            vy: arc ? -0.5 * 260 * tof + 30 : 30,
+            gravity: arc ? 260 : 0,
+            damage: tr.def.damage, aoe: tr.def.aoe, kind: tr.def.proj,
             targetUid: best.uid, targetIsBase: false, sourceUid: null, dead: false,
           });
           sfx('shoot');

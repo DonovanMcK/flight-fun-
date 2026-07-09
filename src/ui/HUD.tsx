@@ -1,6 +1,6 @@
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { engine, LANE_L, LANE_R } from '../game/engine';
-import { EVOLVE_XP } from '../game/data';
+import { EVOLVE_XP, TURRET_SELL_REFUND } from '../game/data';
 import { jumpCamera } from '../game/render';
 import { UnitIcon } from './UnitIcon';
 import { resumeAudio } from '../game/sfx';
@@ -18,13 +18,14 @@ function useGameTick(): void {
 
 export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => void }): JSX.Element {
   useGameTick();
+  const [turretPanel, setTurretPanel] = useState(false);
   const P = engine.player;
   const era = engine.campaign.eras[P.era - 1];
   const nextXp = P.era < 5 ? EVOLVE_XP[P.era] : 0;
   const xpPct = P.era >= 5 ? 100 : Math.min(100, (P.xp / nextXp) * 100);
   const canEvolve = engine.canEvolve('player');
-  const turret = era.turret;
-  const turretFull = P.base.turrets.length >= P.base.slots && !P.base.turrets.some(t => t.era < P.era);
+  const slotCost = engine.nextSlotCost('player');
+  const freeSlot = P.base.turrets.length < P.base.slots;
   const special = era.special;
   const spReady = P.specialCd <= 0;
   const spPct = spReady ? 1 : 1 - P.specialCd / special.cdSec;
@@ -50,6 +51,42 @@ export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => vo
         <button className="icon-btn" onClick={onPause}>⏸</button>
       </div>
 
+      {turretPanel && (
+        <div className="turret-panel">
+          <div className="tp-row">
+            {era.turrets.map(td => {
+              const ok = P.gold >= td.cost && freeSlot;
+              return (
+                <button key={td.kind} className={`tp-buy ${ok ? '' : 'dis'}`} onClick={() => engine.buyTurret('player', td)}>
+                  <span className="tp-ic">{td.icon}</span>
+                  <span className="tp-nm">{td.name}</span>
+                  <span className="tp-stats">{td.damage} dmg · {Math.round(1000 / td.cooldownMs * 10) / 10}/s{td.aoe ? ' · AoE' : ''} · rng {td.range}</span>
+                  <span className="cost">💰{td.cost}</span>
+                </button>
+              );
+            })}
+            <button
+              className={`tp-buy slot ${slotCost != null && P.gold >= slotCost ? '' : 'dis'}`}
+              onClick={() => engine.buySlot('player')}
+            >
+              <span className="tp-ic">➕</span>
+              <span className="tp-nm">Slot {P.base.slots}/4</span>
+              <span className="tp-stats">room for one more turret</span>
+              <span className="cost">{slotCost == null ? 'MAX' : `💰${slotCost}`}</span>
+            </button>
+          </div>
+          {P.base.turrets.length > 0 && (
+            <div className="tp-row built">
+              <span className="tp-label">SELL:</span>
+              {P.base.turrets.map((tr, i) => (
+                <button key={i} className="tp-chip" onClick={() => engine.sellTurret('player', i)}>
+                  {tr.def.icon} {tr.def.name} · E{tr.era} <b>✕ +{Math.round(tr.def.cost * TURRET_SELL_REFUND)}</b>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="hud-bottom" onPointerDown={resumeAudio}>
         {era.units.map(def => {
           const ok = engine.canBuy('player', def);
@@ -62,12 +99,12 @@ export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => vo
           );
         })}
         <button
-          className={`card ${P.gold >= turret.cost && !turretFull ? '' : 'dis'}`}
-          onClick={() => engine.buyTurret('player')}
+          className={`card ${turretPanel ? 'sel' : ''}`}
+          onClick={() => setTurretPanel(v => !v)}
         >
           <span className="big-ic">🛡️</span>
-          <span className="nm">Turret {P.base.turrets.length}/{P.base.slots}</span>
-          <span className="cost">💰{turret.cost}</span>
+          <span className="nm">Turrets {P.base.turrets.length}/{P.base.slots}</span>
+          <span className="cost">{turretPanel ? 'CLOSE ▾' : 'BUILD ▴'}</span>
         </button>
         <button className={`card evolve ${canEvolve ? 'pulse' : 'dis'}`} onClick={() => engine.evolve('player')}>
           <span className="big-ic">🧬</span>

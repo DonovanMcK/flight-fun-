@@ -119,11 +119,23 @@ export interface Projectile {
   dead: boolean;
 }
 
-export interface Turret {
-  era: number;
+export type TurretKind = 'rapid' | 'heavy' | 'sniper';
+
+export interface TurretDef {
+  kind: TurretKind;
+  name: string;
+  icon: string;            // HUD glyph only — the turret itself is drawn procedurally
   damage: number;
   range: number;
   cooldownMs: number;
+  cost: number;
+  aoe: number;             // splash radius (heavy only)
+  proj: NonNullable<RigConfig['projKind']>;
+}
+
+export interface Turret {
+  def: TurretDef;
+  era: number;
   cd: number;
 }
 
@@ -168,6 +180,7 @@ export interface Commander {
   evolveAggression: number;    // multiplies enemy XP gain toward evolving
   turretInvestment: number;    // multiplies turret-buy chance
   specialAggression: number;   // multiplies special-usage chance
+  turretPref: Record<TurretKind, number>;  // which turret types it favors
   boss?: boolean;              // Last Stand: roster override + boss unit
 }
 
@@ -187,7 +200,7 @@ export interface SpecialDef { name: string; icon: string; dmg: number; radius: n
 export interface EraDef {
   name: string;
   units: UnitDef[];
-  turret: { damage: number; range: number; cooldownMs: number; cost: number };
+  turrets: TurretDef[];        // 3 options per era: rapid / heavy / sniper
   evolveXp: number;            // XP required to evolve INTO this era
   baseHp: number;
   special: SpecialDef;

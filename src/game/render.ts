@@ -188,15 +188,27 @@ function drawBase(ctx: CanvasRenderingContext2D, b: BaseState, color: string, er
   const fx = bx + w / 2;
   seg(ctx, pt(fx, by - (era >= 5 ? 38 : 16) * s), pt(fx, by - (era >= 5 ? 52 : 40) * s), '#3a3a44', 2 * s);
   polyS(ctx, [pt(fx + 1, by - (era >= 5 ? 52 : 40) * s), pt(fx + 18 * s, by - (era >= 5 ? 46 : 34) * s), pt(fx + 1, by - (era >= 5 ? 40 : 28) * s)], isP ? '#5ac8ff' : '#ff6b6b', 1.8);
-  // turrets mounted up the inner wall
+  // turrets mounted up the inner wall — silhouette per type:
+  // rapid = twin thin barrels · splash = fat stubby mortar · sniper = long barrel + scope
   b.turrets.forEach((tr, i) => {
-    const ty = gy - hgt * 0.72 - i * 20 * s;
+    const ty = gy - hgt * 0.72 - i * 22 * s;
     const tx2 = isP ? bx + w + 2 : bx - 2;
     const dir = isP ? 1 : -1;
     const eraCol = ['#8a6a3c', '#9aa0a8', '#b0b4c0', '#5a6a4a', '#7ee0ff'][tr.era - 1];
-    rrS(ctx, tx2 - 5 * s, ty, 10 * s, 7 * s, 2 * s, shade(eraCol, -0.15), 1.8);
-    ctx.save(); ctx.translate(tx2, ty + 2 * s); ctx.rotate(dir > 0 ? -0.35 : 0.35 + Math.PI);
-    seg(ctx, pt(0, 0), pt(13 * s, 0), eraCol, 3 * s);
+    rrS(ctx, tx2 - 5.5 * s, ty, 11 * s, 7.5 * s, 2 * s, shade(eraCol, -0.15), 1.8);
+    ctx.save(); ctx.translate(tx2, ty + 2 * s);
+    ctx.rotate(dir > 0 ? -0.35 : 0.35 + Math.PI);
+    if (tr.def.kind === 'rapid') {
+      seg(ctx, pt(0, -1.6 * s), pt(11 * s, -1.6 * s), eraCol, 2 * s);
+      seg(ctx, pt(0, 1.6 * s), pt(11 * s, 1.6 * s), eraCol, 2 * s);
+    } else if (tr.def.kind === 'heavy') {
+      seg(ctx, pt(-1 * s, 0), pt(9 * s, 0), eraCol, 5.5 * s);
+      seg(ctx, pt(8 * s, 0), pt(10.5 * s, 0), shade(eraCol, 0.25), 6.5 * s);
+    } else { // sniper
+      seg(ctx, pt(0, 0), pt(19 * s, 0), eraCol, 2.4 * s);
+      seg(ctx, pt(15 * s, 0), pt(18 * s, 0), shade(eraCol, 0.3), 3.4 * s);
+      cirS(ctx, 5 * s, -3 * s, 1.8 * s, shade(eraCol, 0.35), 1.2);
+    }
     ctx.restore();
   });
   ctx.restore();
