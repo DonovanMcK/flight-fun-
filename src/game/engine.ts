@@ -101,7 +101,7 @@ class Engine {
     this.player = this.makeSide('player', 1, 5);
     const lv = this.level;
     this.enemy = this.makeSide('enemy', lv.startEra, lv.maxEra);
-    this.enemy.incomePerSec = 6.5 * lv.incomeMul;
+    this.enemy.incomePerSec = 6 * lv.incomeMul;
     this.enemy.aggro = lv.aggro;
     this.enemy.base.hp = this.enemy.base.maxHp = Math.round(this.campaign.eras[lv.startEra - 1].baseHp * lv.baseHpMul * BASE_HP_SCALE);
     // both sides' supply grows as they evolve (see evolve()); the enemy starts
@@ -554,7 +554,7 @@ class Engine {
     // spawn loop: role-weighted mix within era window (older eras stay available)
     E.aiSpawnT -= dt;
     if (E.aiSpawnT <= 0) {
-      E.aiSpawnT = (lerp(2.4, 0.7, clamp(E.aggro / 1.4, 0, 1)) + (Math.random() - 0.4) * 0.6) / cmd.spawnRateMul;
+      E.aiSpawnT = (lerp(3, 1, clamp(E.aggro / 1.4, 0, 1)) + (Math.random() - 0.4) * 0.6) / cmd.spawnRateMul;
       const startIdx = this.level.startEra - 1;
       const candidates: { def: UnitDef; w: number }[] = [];
       for (let e = startIdx; e < E.era; e++) {

@@ -16,16 +16,18 @@ const ROLE_BASE: Record<Role, { hp: number; dmg: number; range: number; cdMs: nu
 };
 const eraScale = (t: number) => ({ hp: 1 + 0.85 * t, dmg: 1 + 0.8 * t, cost: 1 + 0.7 * t });
 
-export const EVOLVE_XP = [0, 90, 220, 420, 720];      // XP to evolve INTO era idx (0-based)
+/** Pacing pass from live play-testing: evolving was arriving too fast and the
+ *  overall tempo felt frantic — slower XP, slower income, slower spawn cadence. */
+export const EVOLVE_XP = [0, 120, 300, 560, 950];      // XP to evolve INTO era idx (0-based)
 export const BASE_HP_SCALE = 0.6;
 /** Troop limit grows with each era: base + (era-1) * per-era bonus. */
 export const SUPPLY_BASE = 10;
 export const SUPPLY_PER_ERA = 3;
 export const supplyCapFor = (era: number): number => SUPPLY_BASE + (era - 1) * SUPPLY_PER_ERA;
-export const PLAYER_INCOME = 9;                        // gold/sec passive trickle
-export const XP_TRICKLE_PLAYER = 8;                    // keeps evolution progressing sans kills
-export const XP_TRICKLE_ENEMY = 6.5;
-export const SPAWN_COOLDOWN = 0.55;                    // sec between queue emerges
+export const PLAYER_INCOME = 7.5;                      // gold/sec passive trickle
+export const XP_TRICKLE_PLAYER = 4.5;                  // keeps evolution progressing sans kills
+export const XP_TRICKLE_ENEMY = 3.6;
+export const SPAWN_COOLDOWN = 0.8;                     // sec between queue emerges
 export const QUEUE_MAX = 5;
 
 /** Veterancy kill thresholds by role (light units rank up fast; siege racks up

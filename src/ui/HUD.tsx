@@ -20,6 +20,7 @@ export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => vo
   useGameTick();
   const [turretPanel, setTurretPanel] = useState(false);
   const [tierPanel, setTierPanel] = useState(false);
+  const [shelfOpen, setShelfOpen] = useState(true);
   const P = engine.player;
   const era = engine.campaign.eras[P.era - 1];
   const nextXp = P.era < 5 ? EVOLVE_XP[P.era] : 0;
@@ -52,8 +53,57 @@ export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => vo
         <button className="icon-btn" onClick={() => { engine.speed = engine.speed === 1 ? 2 : engine.speed === 2 ? 3 : 1; }}>
           {engine.speed}×
         </button>
+        <button className={`icon-btn ${shelfOpen ? 'sel-btn' : ''}`} title="Command shelf" onClick={() => { setShelfOpen(v => !v); setTurretPanel(false); setTierPanel(false); }}>
+          {shelfOpen ? '▲' : '⚔️'}
+        </button>
         <button className="icon-btn" onClick={onPause}>⏸</button>
       </div>
+
+      {/* retractable command shelf — anchored top-right over empty sky so it
+          never covers the ground-level action */}
+      <div className={`shelf ${shelfOpen ? '' : 'hidden'}`} onPointerDown={resumeAudio}>
+        <div className="shelf-row">
+          {era.units.map(def => {
+            const ok = engine.canBuy('player', def);
+            const eff = engine.effectiveStats('player', def);
+            const tier = P.tiers[def.id] ?? 0;
+            return (
+              <button key={def.id} className={`card ${ok ? '' : 'dis'}`} onClick={() => engine.buyUnit('player', def)}>
+                <UnitIcon def={def} size={34} />
+                <span className="nm">{def.name}{tier > 0 ? ' ' + '★'.repeat(tier) : ''}</span>
+                <span className="cost">💰{eff.cost} · ⭐{def.supply}</span>
+              </button>
+            );
+          })}
+          <button
+            className={`card ${turretPanel ? 'sel' : ''}`}
+            onClick={() => { setTurretPanel(v => !v); setTierPanel(false); }}
+          >
+            <span className="big-ic">🛡️</span>
+            <span className="nm">Turrets {P.base.turrets.length}/{P.base.slots}</span>
+            <span className="cost">{turretPanel ? 'CLOSE ▾' : 'BUILD ▴'}</span>
+          </button>
+          <button
+            className={`card ${tierPanel ? 'sel' : ''}`}
+            onClick={() => { setTierPanel(v => !v); setTurretPanel(false); }}
+          >
+            <span className="big-ic">⭐</span>
+            <span className="nm">Upgrades</span>
+            <span className="cost">{tierPanel ? 'CLOSE ▾' : 'TRAIN ▴'}</span>
+          </button>
+          <button className={`card evolve ${canEvolve ? 'pulse' : 'dis'}`} onClick={() => engine.evolve('player')}>
+            <span className="big-ic">🧬</span>
+            <span className="nm">Evolve</span>
+            <span className="cost xp">{P.era >= 5 ? 'MAX' : `${Math.floor(P.xp)}/${nextXp} XP`}</span>
+          </button>
+          <button className={`card special ${spReady ? 'pulse' : 'dis'}`} onClick={() => engine.useSpecial('player')}>
+            <span className="radial" style={{ ['--p' as string]: spPct }}>
+              <span className="big-ic">{special.icon}</span>
+            </span>
+            <span className="nm">{special.name}</span>
+            <span className="cost">{spReady ? 'READY' : `${Math.ceil(P.specialCd)}s`}</span>
+          </button>
+        </div>
 
       {turretPanel && (
         <div className="turret-panel">
@@ -111,47 +161,6 @@ export function HUD({ onPause, onQuit }: { onPause: () => void; onQuit: () => vo
           </div>
         </div>
       )}
-      <div className="hud-bottom" onPointerDown={resumeAudio}>
-        {era.units.map(def => {
-          const ok = engine.canBuy('player', def);
-          const eff = engine.effectiveStats('player', def);
-          const tier = P.tiers[def.id] ?? 0;
-          return (
-            <button key={def.id} className={`card ${ok ? '' : 'dis'}`} onClick={() => engine.buyUnit('player', def)}>
-              <UnitIcon def={def} />
-              <span className="nm">{def.name}{tier > 0 ? ' ' + '★'.repeat(tier) : ''}</span>
-              <span className="cost">💰{eff.cost} · ⭐{def.supply}</span>
-            </button>
-          );
-        })}
-        <button
-          className={`card ${turretPanel ? 'sel' : ''}`}
-          onClick={() => { setTurretPanel(v => !v); setTierPanel(false); }}
-        >
-          <span className="big-ic">🛡️</span>
-          <span className="nm">Turrets {P.base.turrets.length}/{P.base.slots}</span>
-          <span className="cost">{turretPanel ? 'CLOSE ▾' : 'BUILD ▴'}</span>
-        </button>
-        <button
-          className={`card ${tierPanel ? 'sel' : ''}`}
-          onClick={() => { setTierPanel(v => !v); setTurretPanel(false); }}
-        >
-          <span className="big-ic">⭐</span>
-          <span className="nm">Upgrades</span>
-          <span className="cost">{tierPanel ? 'CLOSE ▾' : 'TRAIN ▴'}</span>
-        </button>
-        <button className={`card evolve ${canEvolve ? 'pulse' : 'dis'}`} onClick={() => engine.evolve('player')}>
-          <span className="big-ic">🧬</span>
-          <span className="nm">Evolve</span>
-          <span className="cost xp">{P.era >= 5 ? 'MAX' : `${Math.floor(P.xp)}/${nextXp} XP`}</span>
-        </button>
-        <button className={`card special ${spReady ? 'pulse' : 'dis'}`} onClick={() => engine.useSpecial('player')}>
-          <span className="radial" style={{ ['--p' as string]: spPct }}>
-            <span className="big-ic">{special.icon}</span>
-          </span>
-          <span className="nm">{special.name}</span>
-          <span className="cost">{spReady ? 'READY' : `${Math.ceil(P.specialCd)}s`}</span>
-        </button>
       </div>
       {/* queue pips */}
       {P.queue.length > 0 && (
