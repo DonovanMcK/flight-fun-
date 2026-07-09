@@ -33,6 +33,13 @@ spawn queue forces spend timing over spam.
   roster but is capped/floored per level and evolves mid-battle)
 - **Enemy commander personalities** — Rusher, Turtle, Economist, Bombardier — same AI loop,
   different spending weights, plus a **Warlord boss** with a unique boss unit on Last Stand
+- **Evolve doctrines** — every evolve forks: pick **1 of 2 campaign-flavored doctrines**
+  (Shield Wall vs Arrow Storm, Dragonlords vs Endless Brood…) that reshape that era's units
+  for the battle — 16 possible army builds per campaign per run; enemy commanders pick too
+- **Unit tier upgrades** — pay gold mid-battle to train each unit type I → II → III
+  (+30% HP / +25% dmg per tier); applies to living units and future spawns
+- **Turret variety** — 3 turret types per era (Rapid / Splash / Sniper), 1→4 purchasable
+  slots, sell for refund — straight from Age of War's playbook
 - **Veterancy** — units that bank enough kills go veteran: **bonus gold per kill** (never stats),
   marked with a rank pip worth protecting
 - **♾️ Endless mode** — era window scales with wave (`floor ≈ wave/3`, `cap ≈ wave/2`)
