@@ -20,8 +20,8 @@ The production build is **one self-contained file**: [`dist/index.html`](dist/in
 Single-lane tug-of-war on a **scrolling battlefield** — the lane is far wider than the screen,
 so you swipe/drag (or use the minimap strip and ⇤ ⚔ ⇥ jump buttons) to pan between your base,
 the front line, and the enemy base. Both base HP bars stay pinned to the top corners. Units
-auto-walk and fight on contact; destroy the enemy base before yours falls. Gold from kills + a
-trickle buys units, base **turrets**, era **evolution**, and a charged **special** (boulder →
+auto-walk and fight on contact; destroy the enemy base before yours falls. Gold from kills
+buys units and base **turrets**; combat XP drives era **evolution**, and each era has a charged **special** (boulder →
 airstrike → dragonfire → orbital laser). A **supply cap that grows each era** (10 → 22) plus a
 spawn queue forces spend timing over spam.
 
@@ -66,3 +66,8 @@ Everything is data-driven: `src/game/data.ts` holds all 45 unit defs, commanders
 tables; `src/game/rig.ts` is the skeletal animation + 6 rig archetypes (biped, rider, wheeled,
 vehicle, flyer, beast); `src/game/engine.ts` is the simulation; `src/game/render.ts` the scene.
 UI/HUD is React over the canvas.
+
+Movement uses six named tiers derived from unobstructed base-to-center travel targets in
+`src/game/pacing.ts`; each unit keeps an explicit tier based on its role and visual weight.
+Passive Gold is an anti-stalemate configuration switch and is disabled by default. XP is
+never generated from elapsed time.

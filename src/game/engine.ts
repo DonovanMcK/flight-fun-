@@ -7,15 +7,14 @@ import {
   BaseState, CampaignDef, Commander, DoctrineDef, LevelDef, Projectile, Side, SideState, StatMods, Turret, TurretDef,
   UnitDef, UnitInstance,
 } from './types';
-import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PLAYER_INCOME, FRIENDLY_DEATH_XP_PCT, SPAWN_COOLDOWN, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND, TIER_HP, TIER_DMG, MAX_TIER, tierCost } from './data';
+import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PASSIVE_GOLD_FALLBACK_PER_SEC, FRIENDLY_DEATH_XP_PCT, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND, TIER_HP, TIER_DMG, MAX_TIER, tierCost } from './data';
 import { defaultPose, updatePose, ATK_IMPACT } from './rig';
 import { clamp, lerp } from './primitives';
 import { sfx } from './sfx';
+import { LANE_L, LANE_R, LANE_W, UNIT_SPAWN_INSET } from './pacing';
 
-/** Lane is much wider than the screen — the camera scrolls to see the bases. */
-export const LANE_W = 2100;
-export const LANE_L = 52;
-export const LANE_R = LANE_W - 52;
+/** Keep the public geometry exports used by the renderer. */
+export { LANE_L, LANE_R, LANE_W } from './pacing';
 const SPACING = 34;
 
 /* ------------------------------------------------------------- VFX types */
@@ -46,7 +45,7 @@ export function writeSave(s: SaveData): void {
 export type GameMode = 'menu' | 'battle';
 export type BattleResult = 'win' | 'lose' | null;
 
-class Engine {
+export class Engine {
   mode: GameMode = 'menu';
   campaign: CampaignDef = CAMPAIGNS[0];
   level: LevelDef = CAMPAIGNS[0].levels[0];
@@ -101,7 +100,7 @@ class Engine {
     this.player = this.makeSide('player', 1, 5);
     const lv = this.level;
     this.enemy = this.makeSide('enemy', lv.startEra, lv.maxEra);
-    this.enemy.incomePerSec = 2.6 * lv.incomeMul;
+    this.enemy.incomePerSec = PASSIVE_GOLD_FALLBACK_PER_SEC * lv.incomeMul;
     this.enemy.aggro = lv.aggro;
     this.enemy.base.hp = this.enemy.base.maxHp = Math.round(this.campaign.eras[lv.startEra - 1].baseHp * lv.baseHpMul * BASE_HP_SCALE);
     // both sides' supply grows as they evolve (see evolve()); the enemy starts
@@ -120,7 +119,7 @@ class Engine {
       side, gold: side === 'player' ? 200 : 100, xp: 0, era, capEra,
       supply: 0, supplyCap: supplyCapFor(era), supplyBonus: 0, queue: [], spawnCd: 0,
       base, specialCd: 0, specialCdMul: 1, killGoldMul: 1,
-      incomePerSec: PLAYER_INCOME,
+      incomePerSec: PASSIVE_GOLD_FALLBACK_PER_SEC,
       doctrines: [null, null, null, null, null], tiers: {},
       aggro: 1, aiSpawnT: 1.5,
     };
@@ -353,7 +352,7 @@ class Engine {
     const u: UnitInstance = {
       uid: this.uidSeq++,
       def, side,
-      x: side === 'player' ? LANE_L + 14 : LANE_R - 14,
+      x: side === 'player' ? LANE_L + UNIT_SPAWN_INSET : LANE_R - UNIT_SPAWN_INSET,
       hp: eff.hp, maxHp: eff.hp,
       stats: { dmg: eff.dmg, spd: eff.spd, range: eff.range, cdMs: eff.cdMs, aoe: eff.aoe },
       tier: s.tiers[def.id] ?? 0,
@@ -592,8 +591,8 @@ class Engine {
     this.time += dt;
     const P = this.player, E = this.enemy;
 
-    // COMBAT-DRIVEN ECONOMY: gold & XP come from kills (see damageUnit).
-    // This trickle is intentionally tiny — anti-stalemate insurance only.
+    // Combat is the only default source of Gold and XP (see damageUnit).
+    // incomePerSec is an explicit anti-stalemate fallback and defaults to 0.
     P.gold += P.incomePerSec * dt;
     E.gold += E.incomePerSec * dt;
     P.specialCd = Math.max(0, P.specialCd - dt);
@@ -608,7 +607,8 @@ class Engine {
       if (s.queue.length && s.spawnCd <= 0) {
         const q = s.queue.shift()!;
         this.spawnUnit(s.side, q.def);
-        s.spawnCd = SPAWN_COOLDOWN;
+        // Spawn pacing is a unit stat, independent of movement and combat stats.
+        s.spawnCd = q.def.spawnTimeSec;
       }
     }
 
@@ -665,6 +665,7 @@ class Engine {
           u.state = 'walk';
           u.x += dir * u.stats.spd * dt;
           u.x = clamp(u.x, LANE_L - 6, LANE_R + 6);
+          // Preserve the authored walk cycle while matching cadence to speed.
           u.walkPhase += dt * u.stats.spd * 0.12;
           if (Math.random() < dt * 6 && u.def.rig.kind !== 'flyer') {
             this.particles.push({

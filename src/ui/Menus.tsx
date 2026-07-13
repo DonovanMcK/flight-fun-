@@ -80,7 +80,7 @@ export function LevelSelect({ campaign, onPick, onBack }: { campaign: CampaignDe
 export function HowTo({ onBack }: { onBack: () => void }): JSX.Element {
   const tips = [
     '🎯 Destroy the enemy base (right) before yours (left) falls.',
-    '💰 Gold & XP come from KILLS — win fights to fund your army. Waiting earns almost nothing.',
+    '💰 Gold and XP come from COMBAT — win fights to fund your army. Waiting earns nothing.',
     '🕊 Your fallen units grant a little XP too, so a losing push still teaches you.',
     '⭐ Supply caps your army; queued units emerge from your base.',
     '🧬 XP fills the bar — EVOLVE to unlock a stronger era.',

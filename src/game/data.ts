@@ -3,24 +3,22 @@
  *  scaled by era so evolving always matters; values carried over from the
  *  play-tested v1 balance pass.
  */
-import { CampaignDef, Commander, DoctrineDef, EraDef, LevelDef, Role, RigConfig, SpecialDef, TurretDef, UnitDef } from './types';
+import { CampaignDef, Commander, DoctrineDef, EraDef, LevelDef, MovementTier, Role, RigConfig, SpecialDef, TurretDef, UnitDef } from './types';
+import { MOVEMENT_TIERS } from './pacing';
 
 /* ------------------------------------------------------------ role bases */
-/** Move speeds tuned up ~25% for the long scrolling lane. */
-const ROLE_BASE: Record<Role, { hp: number; dmg: number; range: number; cdMs: number; spd: number; cost: number; sup: number }> = {
-  melee:  { hp: 150, dmg: 18, range: 46,  cdMs: 900,  spd: 80,  cost: 55,  sup: 1 },
-  fast:   { hp: 95,  dmg: 14, range: 44,  cdMs: 700,  spd: 148, cost: 65,  sup: 1 },
-  ranged: { hp: 80,  dmg: 22, range: 230, cdMs: 1100, spd: 70,  cost: 85,  sup: 2 },
-  tank:   { hp: 520, dmg: 16, range: 50,  cdMs: 1200, spd: 50,  cost: 150, sup: 3 },
-  siege:  { hp: 140, dmg: 70, range: 330, cdMs: 2200, spd: 45,  cost: 210, sup: 4 },
+const ROLE_BASE: Record<Role, { hp: number; dmg: number; range: number; cdMs: number; cost: number; sup: number }> = {
+  melee:  { hp: 150, dmg: 18, range: 46,  cdMs: 900,  cost: 55,  sup: 1 },
+  fast:   { hp: 95,  dmg: 14, range: 44,  cdMs: 700,  cost: 65,  sup: 1 },
+  ranged: { hp: 80,  dmg: 22, range: 230, cdMs: 1100, cost: 85,  sup: 2 },
+  tank:   { hp: 520, dmg: 16, range: 50,  cdMs: 1200, cost: 150, sup: 3 },
+  siege:  { hp: 140, dmg: 70, range: 330, cdMs: 2200, cost: 210, sup: 4 },
 };
 const eraScale = (t: number) => ({ hp: 1 + 0.85 * t, dmg: 1 + 0.8 * t, cost: 1 + 0.7 * t });
 
-/** COMBAT-DRIVEN ECONOMY (per design guide): neither gold nor XP is primarily
- *  generated per second. Kills pay ~1.3× the victim's value in gold and ~1.8×
- *  that gold in XP; your own casualties grant 20% consolation XP so a losing
- *  side still progresses. Passive income is intentionally tiny — it exists
- *  only to prevent total stalemates. Waiting is never the optimal play. */
+/** COMBAT-DRIVEN ECONOMY: Gold and XP come from combat events. Kills pay
+ *  ~1.3× the victim's value in gold and ~1.8× that gold in XP; your own
+ *  casualties grant 20% consolation XP so a losing side still progresses. */
 export const KILL_GOLD_MULT = 1.3;      // goldReward ≈ UnitValue × 1.2–1.5
 export const KILL_XP_MULT = 1.8;        // xpReward ≈ goldReward × 1.5–2.5
 export const FRIENDLY_DEATH_XP_PCT = 0.2; // consolation XP: 10–30% of the unit's kill XP
@@ -31,8 +29,10 @@ export const BASE_HP_SCALE = 0.6;
 export const SUPPLY_BASE = 10;
 export const SUPPLY_PER_ERA = 3;
 export const supplyCapFor = (era: number): number => SUPPLY_BASE + (era - 1) * SUPPLY_PER_ERA;
-export const PLAYER_INCOME = 3;         // anti-stalemate trickle only
-export const SPAWN_COOLDOWN = 0.8;      // sec between queue emerges
+/** Optional anti-stalemate fallback. Disabled by default; setting this above
+ *  zero deliberately re-enables passive Gold for both sides (never XP). */
+export const PASSIVE_GOLD_FALLBACK_PER_SEC = 0;
+export const DEFAULT_UNIT_SPAWN_TIME = 0.8;
 export const QUEUE_MAX = 5;
 
 /** Veterancy kill thresholds by role (light units rank up fast; siege racks up
@@ -40,22 +40,58 @@ export const QUEUE_MAX = 5;
 const VETERANCY: Record<Role, number> = { melee: 4, fast: 3, ranged: 4, tank: 8, siege: 10 };
 export const VETERAN_GOLD_BONUS = 0.5;   // +50% of reward per kill once veteran
 
+/** Per-identity movement is explicit: roles inform the choice, while visual
+ *  mass and identity decide exceptions such as scouts, dragons, and machines. */
+const UNIT_MOVEMENT_TIER: Record<string, MovementTier> = {
+  Clubman: 'Normal', 'Boar Rider': 'Fast', Slinger: 'Normal',
+  Legionary: 'Normal', Shieldman: 'Slow', Archer: 'Normal',
+  Knight: 'Slow', Cavalry: 'Fast', Catapult: 'Very Slow',
+  Rifleman: 'Normal', 'Armored Car': 'Slow', Mortar: 'Very Slow',
+  'Battle Drone': 'Fast', Mech: 'Very Slow', 'Rocket Turret': 'Massive',
+
+  Goblin: 'Fast', Ratling: 'Very Fast', Hurler: 'Normal',
+  Footman: 'Normal', Paladin: 'Slow', Longbow: 'Normal',
+  'Stag Rider': 'Fast', Ranger: 'Fast', Ballista: 'Very Slow',
+  Battlemage: 'Normal', Golem: 'Very Slow', 'Orb Caster': 'Slow',
+  Wyvern: 'Fast', Drake: 'Very Slow', 'Elder Dragon': 'Massive',
+
+  Colonist: 'Normal', Speeder: 'Very Fast', Marine: 'Normal',
+  Trooper: 'Normal', APC: 'Slow', Sniper: 'Normal',
+  'Scout Bot': 'Very Fast', Warbot: 'Very Slow', 'Rail Cannon': 'Massive',
+  Interceptor: 'Very Fast', Cruiser: 'Very Slow', 'Ion Turret': 'Massive',
+  Fighter: 'Very Fast', Dreadnought: 'Massive', 'Nova Cannon': 'Massive',
+};
+
+interface UnitBalanceOverrides {
+  cost?: number;
+  hp?: number;
+  damage?: number;
+  movementTier?: MovementTier;
+  moveSpeed?: number;
+  spawnTimeSec?: number;
+  reward?: number;
+  xpReward?: number;
+}
+
 let uidSeq = 1;
-function makeUnit(campaign: string, era: number, role: Role, name: string, rig: RigConfig): UnitDef {
+function makeUnit(campaign: string, era: number, role: Role, name: string, rig: RigConfig, overrides: UnitBalanceOverrides = {}): UnitDef {
   const b = ROLE_BASE[role], s = eraScale(era - 1);
-  const cost = Math.round(b.cost * s.cost);
+  const cost = overrides.cost ?? Math.round(b.cost * s.cost);
+  const movementTier = overrides.movementTier ?? UNIT_MOVEMENT_TIER[name] ?? 'Normal';
   return {
     id: `${campaign}-${era}-${uidSeq++}`,
     name, role, era,
     cost,
-    hp: Math.round(b.hp * s.hp),
-    damage: Math.round(b.dmg * s.dmg),
+    hp: overrides.hp ?? Math.round(b.hp * s.hp),
+    damage: overrides.damage ?? Math.round(b.dmg * s.dmg),
     attackRange: b.range,
     attackCooldownMs: b.cdMs,
-    moveSpeed: b.spd,
+    movementTier,
+    moveSpeed: overrides.moveSpeed ?? MOVEMENT_TIERS[movementTier].speed,
+    spawnTimeSec: overrides.spawnTimeSec ?? DEFAULT_UNIT_SPAWN_TIME,
     supply: b.sup,
-    reward: Math.round(cost * KILL_GOLD_MULT),
-    xpReward: Math.round(cost * KILL_GOLD_MULT * KILL_XP_MULT),
+    reward: overrides.reward ?? Math.round(cost * KILL_GOLD_MULT),
+    xpReward: overrides.xpReward ?? Math.round(cost * KILL_GOLD_MULT * KILL_XP_MULT),
     veterancyThreshold: VETERANCY[role],
     rig,
   };
@@ -64,7 +100,7 @@ function makeUnit(campaign: string, era: number, role: Role, name: string, rig: 
 /** Boss unit factory — enemyRosterOverride for Last Stand (identity label only,
  *  never rendered as emoji: 🗿 Titan / 🐉 Dragon King / 🛸 Mothership). */
 function makeBoss(campaign: string, name: string, rig: RigConfig): UnitDef {
-  const base = makeUnit(campaign, 5, 'tank', name, rig);
+  const base = makeUnit(campaign, 5, 'tank', name, rig, { movementTier: 'Massive' });
   const cost = Math.round(base.cost * 2.4);
   return {
     ...base,
@@ -76,7 +112,6 @@ function makeBoss(campaign: string, name: string, rig: RigConfig): UnitDef {
     // boss bounty: elite payout per the combat-economy guide
     reward: Math.round(cost * BOSS_GOLD_MULT),
     xpReward: Math.round(cost * BOSS_GOLD_MULT * 2),
-    moveSpeed: 34,
     attackRange: 60,
     veterancyThreshold: 99,
   };

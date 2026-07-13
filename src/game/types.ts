@@ -2,6 +2,7 @@
 
 export type Role = 'melee' | 'fast' | 'ranged' | 'tank' | 'siege';
 export type Side = 'player' | 'enemy';
+export type MovementTier = 'Very Fast' | 'Fast' | 'Normal' | 'Slow' | 'Very Slow' | 'Massive';
 
 /** Which procedural rig archetype draws this unit (spec §1). */
 export type RigKind = 'biped' | 'rider' | 'wheeled' | 'vehicle' | 'flyer' | 'beast';
@@ -54,7 +55,9 @@ export interface UnitDef {
   damage: number;
   attackRange: number;      // px (world units)
   attackCooldownMs: number;
+  movementTier: MovementTier;
   moveSpeed: number;        // px/s
+  spawnTimeSec: number;     // queue delay after this unit emerges
   supply: number;
   reward: number;           // gold to killer on death
   xpReward: number;
