@@ -237,7 +237,9 @@ function levelsFor(): LevelDef[] {
   const commanders = ['rusher', 'rusher', 'economist', 'siegeSpammer', 'turtle', 'siegeSpammer', 'economist', 'boss'];
   return names.map((name, i) => ({
     idx: i, name,
-    startEra: i >= 6 ? 2 : 1,
+    // Every battle opens at Era 1; difficulty changes the ceiling, budget,
+    // and commander, never a pre-evolved starting army.
+    startEra: 1,
     maxEra: maxEra[i],
     incomeMul: (0.85 + i * 0.13) * (commanders[i] === 'boss' ? 1.2 : 1),
     enemyStartingGold: Math.round((300 + i * 90) * (commanders[i] === 'boss' ? 1.25 : 1)),
@@ -384,11 +386,10 @@ function cosmicFrontier(): CampaignDef {
 
 export const CAMPAIGNS: CampaignDef[] = [riseOfMan(), mythicRealms(), cosmicFrontier()];
 
-/** Endless era window — spec §5: floor ≈ ⌊wave/3⌋, cap ≈ ⌊wave/2⌋ (1-based eras). */
+/** Endless always begins at Era 1; later waves raise only the evolution cap. */
 export function endlessWindow(wave: number): { startEra: number; maxEra: number } {
-  const floor = Math.min(1 + Math.floor(wave / 3), 5);
-  const cap = Math.max(floor, Math.min(1 + Math.floor(wave / 2), 5));
-  return { startEra: floor, maxEra: cap };
+  const cap = Math.min(1 + Math.floor(wave / 2), 5);
+  return { startEra: 1, maxEra: cap };
 }
 export function endlessLevel(wave: number): LevelDef {
   const w = endlessWindow(wave);

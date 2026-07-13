@@ -29,8 +29,8 @@ spawn queue forces spend timing over spam.
   - 🗿 Rise of Man — Stone → Iron → Castle → Modern → Future
   - 🐉 Mythic Realms — Goblins → Kingdom → Elves → Arcane → Dragons
   - 🛸 Cosmic Frontier — Colony → Federation → Robotics → Star Fleet → Star Empire
-- **8 battles per campaign** with a fixed enemy **era window** per level (the AI mirrors your
-  roster but is capped/floored per level and evolves mid-battle)
+- **8 battles per campaign** with a fixed enemy **era ceiling** per level (both sides begin
+  at Era 1 and the AI must earn combat XP to evolve mid-battle)
 - **Enemy commander personalities** — Rusher, Turtle, Economist, Bombardier — same AI loop,
   different spending weights, plus a **Warlord boss** with a unique boss unit on Last Stand
 - **Evolve doctrines** — every evolve forks: pick **1 of 2 campaign-flavored doctrines**
@@ -44,7 +44,7 @@ spawn queue forces spend timing over spam.
   marked with a rank pip worth protecting
 - **Two-rank ranged formations** — the front two ranged units loose together; later ranks hold
   until a firing position opens
-- **♾️ Endless mode** — era window scales with wave (`floor ≈ wave/3`, `cap ≈ wave/2`)
+- **♾️ Endless mode** — both sides start at Era 1 while the enemy evolution cap rises by wave
 - Progress, endless best, and sound settings persist in localStorage
 
 ## ✨ Game feel

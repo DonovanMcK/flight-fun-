@@ -24,6 +24,11 @@ export const RANGED_FIRE_RANKS = 2;
 export const rangedFormationReach = (baseRange: number, rank: number): number =>
   rank >= 0 && rank < RANGED_FIRE_RANKS ? baseRange + rank * SPACING : 0;
 
+/** AI tier progression mirrors the player's unlocks: it may catch up, but it
+ *  can never field a tier the player has not purchased for that unit type. */
+export const canEnemyAdvanceTier = (playerTier: number, enemyTier: number): boolean =>
+  enemyTier < MAX_TIER && enemyTier < playerTier;
+
 /* ------------------------------------------------------------- VFX types */
 export interface Particle {
   x: number; y: number; vx: number; vy: number; g: number;
@@ -111,8 +116,7 @@ export class Engine {
     this.enemy.incomePerSec = PASSIVE_GOLD_FALLBACK_PER_SEC * lv.incomeMul;
     this.enemy.aggro = lv.aggro;
     this.enemy.base.hp = this.enemy.base.maxHp = Math.round(this.campaign.eras[lv.startEra - 1].baseHp * lv.baseHpMul * BASE_HP_SCALE);
-    // both sides' supply grows as they evolve (see evolve()); the enemy starts
-    // at its floor-era cap
+    // Both sides begin at Era 1 and grow supply naturally as they evolve.
     this.notify();
   }
 
@@ -568,7 +572,8 @@ export class Engine {
       const eraUnits = this.campaign.eras[E.era - 1].units;
       const candidate = eraUnits[(Math.random() * eraUnits.length) | 0];
       const cur = E.tiers[candidate.id] ?? 0;
-      if (cur < MAX_TIER && E.gold > tierCost(candidate.cost, cur + 1) * 1.8) this.buyTier('enemy', candidate);
+      const playerTier = this.player.tiers[candidate.id] ?? 0;
+      if (canEnemyAdvanceTier(playerTier, cur) && E.gold > tierCost(candidate.cost, cur + 1) * 1.8) this.buyTier('enemy', candidate);
     }
     // special usage when there's a push worth resetting
     const playerPush = this.units.filter(u => u.side === 'player' && u.state !== 'die').length;

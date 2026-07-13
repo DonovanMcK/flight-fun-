@@ -201,7 +201,7 @@ export interface Commander {
 export interface LevelDef {
   idx: number;                 // 0-based
   name: string;
-  startEra: number;            // 1-based
+  startEra: number;            // opening era; fair-start rules keep this at 1
   maxEra: number;              // 1-based cap
   incomeMul: number;
   enemyStartingGold: number;   // opening war chest; ongoing income remains combat-driven

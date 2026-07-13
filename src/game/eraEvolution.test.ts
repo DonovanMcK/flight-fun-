@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AI_OPENING_FORCE, CAMPAIGNS } from './data';
-import { Engine, rangedFormationReach, RANGED_FIRE_RANKS } from './engine';
+import { AI_OPENING_FORCE, CAMPAIGNS, endlessWindow } from './data';
+import { canEnemyAdvanceTier, Engine, rangedFormationReach, RANGED_FIRE_RANKS } from './engine';
 
 describe('data-driven era visuals', () => {
   it('defines a complete, ordered visual package for every campaign era', () => {
@@ -48,5 +48,20 @@ describe('competitive AI opening', () => {
       expect(budgets[0]).toBeGreaterThanOrEqual(300);
       expect([...budgets].sort((a, b) => a - b)).toEqual(budgets);
     }
+  });
+
+  it('starts every campaign and Endless battle at Era 1', () => {
+    for (const campaign of CAMPAIGNS) {
+      expect(campaign.levels.every(level => level.startEra === 1)).toBe(true);
+    }
+    for (const wave of [0, 3, 8, 20]) expect(endlessWindow(wave).startEra).toBe(1);
+  });
+
+  it('allows the AI to match but never exceed the player unit tier', () => {
+    expect(canEnemyAdvanceTier(0, 0)).toBe(false);
+    expect(canEnemyAdvanceTier(1, 0)).toBe(true);
+    expect(canEnemyAdvanceTier(1, 1)).toBe(false);
+    expect(canEnemyAdvanceTier(2, 1)).toBe(true);
+    expect(canEnemyAdvanceTier(2, 2)).toBe(false);
   });
 });
