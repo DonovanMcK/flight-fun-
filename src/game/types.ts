@@ -170,6 +170,7 @@ export interface SideState {
   base: BaseState;
   specialCd: number;           // seconds remaining
   specialCdMul: number;        // doctrine rider
+  killGoldMul: number;         // doctrine rider — gold-from-kills multiplier
   incomePerSec: number;
   /** doctrine chosen per era (index era-1); null = none / era 1 */
   doctrines: (DoctrineDef | null)[];
@@ -222,7 +223,7 @@ export interface DoctrineDef {
   bad: string[];                     // red lines
   unitMods?: Partial<Record<Role, StatMods>>;
   allMods?: StatMods;                // applies to every unit of this era
-  rider?: { incomeMul?: number; specialCdMul?: number; supplyBonus?: number };
+  rider?: { killGoldMul?: number; specialCdMul?: number; supplyBonus?: number };
 }
 
 export interface EraDef {

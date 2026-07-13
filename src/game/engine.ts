@@ -7,7 +7,7 @@ import {
   BaseState, CampaignDef, Commander, DoctrineDef, LevelDef, Projectile, Side, SideState, StatMods, Turret, TurretDef,
   UnitDef, UnitInstance,
 } from './types';
-import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PLAYER_INCOME, XP_TRICKLE_PLAYER, XP_TRICKLE_ENEMY, SPAWN_COOLDOWN, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND, TIER_HP, TIER_DMG, MAX_TIER, tierCost } from './data';
+import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PLAYER_INCOME, FRIENDLY_DEATH_XP_PCT, SPAWN_COOLDOWN, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND, TIER_HP, TIER_DMG, MAX_TIER, tierCost } from './data';
 import { defaultPose, updatePose, ATK_IMPACT } from './rig';
 import { clamp, lerp } from './primitives';
 import { sfx } from './sfx';
@@ -101,7 +101,7 @@ class Engine {
     this.player = this.makeSide('player', 1, 5);
     const lv = this.level;
     this.enemy = this.makeSide('enemy', lv.startEra, lv.maxEra);
-    this.enemy.incomePerSec = 6 * lv.incomeMul;
+    this.enemy.incomePerSec = 2.6 * lv.incomeMul;
     this.enemy.aggro = lv.aggro;
     this.enemy.base.hp = this.enemy.base.maxHp = Math.round(this.campaign.eras[lv.startEra - 1].baseHp * lv.baseHpMul * BASE_HP_SCALE);
     // both sides' supply grows as they evolve (see evolve()); the enemy starts
@@ -119,7 +119,7 @@ class Engine {
     return {
       side, gold: side === 'player' ? 200 : 100, xp: 0, era, capEra,
       supply: 0, supplyCap: supplyCapFor(era), supplyBonus: 0, queue: [], spawnCd: 0,
-      base, specialCd: 0, specialCdMul: 1,
+      base, specialCd: 0, specialCdMul: 1, killGoldMul: 1,
       incomePerSec: PLAYER_INCOME,
       doctrines: [null, null, null, null, null], tiers: {},
       aggro: 1, aiSpawnT: 1.5,
@@ -284,7 +284,7 @@ class Engine {
   private applyDoctrine(s: SideState, d: DoctrineDef): void {
     s.doctrines[d.era - 1] = d;
     if (d.rider) {
-      s.incomePerSec *= d.rider.incomeMul ?? 1;
+      s.killGoldMul *= d.rider.killGoldMul ?? 1;
       s.specialCdMul *= d.rider.specialCdMul ?? 1;
       s.supplyBonus += d.rider.supplyBonus ?? 0;
     }
@@ -381,7 +381,8 @@ class Engine {
       const killer = this.sideFor(from);
       const sd = this.sideFor(u.side);
       sd.supply = Math.max(0, sd.supply - u.def.supply);
-      let reward = u.def.reward;
+      // COMBAT-DRIVEN ECONOMY: the kill IS the income.
+      let reward = Math.round(u.def.reward * killer.killGoldMul);
       // veterancy: kill credit → threshold unlock → gold bonus (never stats)
       if (attacker && attacker.state !== 'die') {
         attacker.kills++;
@@ -396,8 +397,11 @@ class Engine {
         }
       }
       killer.gold += reward;
-      killer.xp += u.def.xpReward;
-      if (from === 'player') this.floats.push({ x: u.x, y: -46, t: 0, text: `+${u.def.reward}`, color: '#ffd25a' });
+      // kill XP (enemy's pace shaped by its commander's evolve aggression)
+      killer.xp += Math.round(u.def.xpReward * (from === 'enemy' ? this.commander.evolveAggression : 1));
+      // consolation XP: your fallen troops still teach you something
+      sd.xp += Math.round(u.def.xpReward * FRIENDLY_DEATH_XP_PCT * (u.side === 'enemy' ? this.commander.evolveAggression : 1));
+      if (from === 'player') this.floats.push({ x: u.x, y: -46, t: 0, text: `+${reward}`, color: '#ffd25a' });
       sfx('die');
     }
   }
@@ -588,12 +592,10 @@ class Engine {
     this.time += dt;
     const P = this.player, E = this.enemy;
 
-    // economy + XP trickle (trickle keeps evolution progressing without kills;
-    // the commander's evolveAggression paces how fast the enemy climbs eras)
+    // COMBAT-DRIVEN ECONOMY: gold & XP come from kills (see damageUnit).
+    // This trickle is intentionally tiny — anti-stalemate insurance only.
     P.gold += P.incomePerSec * dt;
     E.gold += E.incomePerSec * dt;
-    P.xp += XP_TRICKLE_PLAYER * dt;
-    E.xp += XP_TRICKLE_ENEMY * this.commander.evolveAggression * dt;
     P.specialCd = Math.max(0, P.specialCd - dt);
     E.specialCd = Math.max(0, E.specialCd - dt);
     P.base.hitT = Math.max(0, P.base.hitT - dt);

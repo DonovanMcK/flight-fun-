@@ -16,18 +16,23 @@ const ROLE_BASE: Record<Role, { hp: number; dmg: number; range: number; cdMs: nu
 };
 const eraScale = (t: number) => ({ hp: 1 + 0.85 * t, dmg: 1 + 0.8 * t, cost: 1 + 0.7 * t });
 
-/** Pacing pass from live play-testing: evolving was arriving too fast and the
- *  overall tempo felt frantic — slower XP, slower income, slower spawn cadence. */
-export const EVOLVE_XP = [0, 120, 300, 560, 950];      // XP to evolve INTO era idx (0-based)
+/** COMBAT-DRIVEN ECONOMY (per design guide): neither gold nor XP is primarily
+ *  generated per second. Kills pay ~1.3× the victim's value in gold and ~1.8×
+ *  that gold in XP; your own casualties grant 20% consolation XP so a losing
+ *  side still progresses. Passive income is intentionally tiny — it exists
+ *  only to prevent total stalemates. Waiting is never the optimal play. */
+export const KILL_GOLD_MULT = 1.3;      // goldReward ≈ UnitValue × 1.2–1.5
+export const KILL_XP_MULT = 1.8;        // xpReward ≈ goldReward × 1.5–2.5
+export const FRIENDLY_DEATH_XP_PCT = 0.2; // consolation XP: 10–30% of the unit's kill XP
+export const BOSS_GOLD_MULT = 1.6;      // elite/boss bonus payouts
+export const EVOLVE_XP = [0, 350, 900, 1800, 3200];    // XP to evolve INTO era idx (0-based)
 export const BASE_HP_SCALE = 0.6;
 /** Troop limit grows with each era: base + (era-1) * per-era bonus. */
 export const SUPPLY_BASE = 10;
 export const SUPPLY_PER_ERA = 3;
 export const supplyCapFor = (era: number): number => SUPPLY_BASE + (era - 1) * SUPPLY_PER_ERA;
-export const PLAYER_INCOME = 7.5;                      // gold/sec passive trickle
-export const XP_TRICKLE_PLAYER = 4.5;                  // keeps evolution progressing sans kills
-export const XP_TRICKLE_ENEMY = 3.6;
-export const SPAWN_COOLDOWN = 0.8;                     // sec between queue emerges
+export const PLAYER_INCOME = 3;         // anti-stalemate trickle only
+export const SPAWN_COOLDOWN = 0.8;      // sec between queue emerges
 export const QUEUE_MAX = 5;
 
 /** Veterancy kill thresholds by role (light units rank up fast; siege racks up
@@ -49,8 +54,8 @@ function makeUnit(campaign: string, era: number, role: Role, name: string, rig: 
     attackCooldownMs: b.cdMs,
     moveSpeed: b.spd,
     supply: b.sup,
-    reward: Math.round(cost * 0.55),
-    xpReward: Math.round(10 + (era - 1) * 8 + b.sup * 4),
+    reward: Math.round(cost * KILL_GOLD_MULT),
+    xpReward: Math.round(cost * KILL_GOLD_MULT * KILL_XP_MULT),
     veterancyThreshold: VETERANCY[role],
     rig,
   };
@@ -60,15 +65,17 @@ function makeUnit(campaign: string, era: number, role: Role, name: string, rig: 
  *  never rendered as emoji: 🗿 Titan / 🐉 Dragon King / 🛸 Mothership). */
 function makeBoss(campaign: string, name: string, rig: RigConfig): UnitDef {
   const base = makeUnit(campaign, 5, 'tank', name, rig);
+  const cost = Math.round(base.cost * 2.4);
   return {
     ...base,
     id: `${campaign}-boss`,
     hp: Math.round(base.hp * 3),
     damage: Math.round(base.damage * 2.2),
-    cost: Math.round(base.cost * 2.4),
+    cost,
     supply: 6,
-    reward: Math.round(base.cost * 2.4 * 0.7),
-    xpReward: 120,
+    // boss bounty: elite payout per the combat-economy guide
+    reward: Math.round(cost * BOSS_GOLD_MULT),
+    xpReward: Math.round(cost * BOSS_GOLD_MULT * 2),
     moveSpeed: 34,
     attackRange: 60,
     veterancyThreshold: 99,
@@ -123,10 +130,10 @@ function doctrinePairs(campaignId: string, names: [string, string, string, strin
         { unitMods: { siege: { dmg: 1.3, range: 1.15, aoe: 1.35 }, fast: { hp: 0.9 } } }),
     ],
     [ // era 4: Economy vs Arsenal
-      D(4, 4, 'defensive', ['+20% gold income', 'Era-4 units cost −10%'], ['Era-4 damage −8%'],
-        { allMods: { cost: 0.9, dmg: 0.92 }, rider: { incomeMul: 1.2 } }),
-      D(5, 4, 'aggressive', ['Era-4 units +18% damage', 'Special recharges 20% faster'], ['Income −8%'],
-        { allMods: { dmg: 1.18 }, rider: { specialCdMul: 0.8, incomeMul: 0.92 } }),
+      D(4, 4, 'defensive', ['Kills pay +20% gold', 'Era-4 units cost −10%'], ['Era-4 damage −8%'],
+        { allMods: { cost: 0.9, dmg: 0.92 }, rider: { killGoldMul: 1.2 } }),
+      D(5, 4, 'aggressive', ['Era-4 units +18% damage', 'Special recharges 20% faster'], ['Kills pay −8% gold'],
+        { allMods: { dmg: 1.18 }, rider: { specialCdMul: 0.8, killGoldMul: 0.92 } }),
     ],
     [ // era 5: Apex vs Horde
       D(6, 5, 'defensive', ['Era-5 units +25% HP, +15% damage'], ['Era-5 units cost +25%'],
