@@ -7,7 +7,7 @@
 import { engine, LANE_W, LANE_L, LANE_R, SpecialFx } from './engine';
 import { drawUnit } from './rig';
 import { rrS, cirS, polyS, shade, seg, pt, clamp, lerp, TAU } from './primitives';
-import { BaseState, Projectile } from './types';
+import { BaseState, EraStage, EraVisualDef, Projectile } from './types';
 
 /* ------------------------------------------------------------- camera */
 /** World units visible at once — the lane (LANE_W) is far wider, so the
@@ -33,15 +33,6 @@ export function minimapSeek(screenX: number): void {
   camera.target = clampCam(frac * LANE_W - VIEW_W / 2);
 }
 
-interface EraEnv { sky1: string; sky2: string; mtn: string; hill: string; g1: string; g2: string; props: 'rock' | 'tree' | 'castle' | 'city' | 'neon'; }
-const ERA_ENV: EraEnv[] = [
-  { sky1: '#7aa8d8', sky2: '#e8d8b8', mtn: '#7d8a76', hill: '#7c8a52', g1: '#6f7a44', g2: '#4c5730', props: 'rock' },
-  { sky1: '#6d95cf', sky2: '#d8ccb0', mtn: '#5f6f82', hill: '#5f7a4a', g1: '#5f6d3a', g2: '#3d4c29', props: 'tree' },
-  { sky1: '#5f7fbf', sky2: '#c0b8a8', mtn: '#4d5f7d', hill: '#4f6f46', g1: '#586738', g2: '#37461f', props: 'castle' },
-  { sky1: '#7a7684', sky2: '#c8bda8', mtn: '#4c4c58', hill: '#47505a', g1: '#4c5054', g2: '#2f3438', props: 'city' },
-  { sky1: '#141433', sky2: '#4a3a6e', mtn: '#26264a', hill: '#2f3057', g1: '#31374a', g2: '#1e2030', props: 'neon' },
-];
-
 function hexRgb(h: string): [number, number, number] {
   let s = h.replace('#', '');
   if (s.length === 3) s = s.split('').map(c => c + c).join('');
@@ -59,27 +50,42 @@ function rgbHex(rgb: string): string {
   return `#${to2(m[1])}${to2(m[2])}${to2(m[3])}`;
 }
 
-let dispEra = 0;   // eased float era index (0-based) — drives the cross-fade
+interface EraVisualBlend {
+  from: EraVisualDef;
+  to: EraVisualDef;
+  t: number;
+  skyTop: string;
+  skyBottom: string;
+  mountain: string;
+  hill: string;
+  groundTop: string;
+  groundBottom: string;
+  lightTint: string;
+  lightStrength: number;
+}
 
-function blendedEnv(dt: number): EraEnv {
+let dispEra = 0;   // visual-only float era index; gameplay era changes instantly
+
+function blendedVisual(dt: number): EraVisualBlend {
   const target = engine.player ? engine.player.era - 1 : 0;
-  dispEra += (target - dispEra) * clamp(dt * 2.2, 0, 1);
-  const i0 = clamp(Math.floor(dispEra), 0, 4), i1 = clamp(i0 + 1, 0, 4);
+  const eras = engine.campaign.eras;
+  const duration = eras[target]?.visual.transition.durationSec ?? 0.8;
+  const step = dt / Math.max(0.1, duration);
+  dispEra = target > dispEra ? Math.min(target, dispEra + step) : Math.max(target, dispEra - step);
+  const i0 = clamp(Math.floor(dispEra), 0, eras.length - 1), i1 = clamp(i0 + 1, 0, eras.length - 1);
   const t = clamp(dispEra - i0, 0, 1);
-  const a = ERA_ENV[i0], b = ERA_ENV[i1];
-  const th = engine.campaign.theme;
-  const camp = 0.28; // blend toward the campaign tint so timelines stay distinct
-  const mixC = (x: string, y: string) => mixHex(x, y, t);
-  const env: EraEnv = {
-    sky1: mixHex(rgbHex(mixC(a.sky1, b.sky1)), th.tint1, camp),
-    sky2: mixHex(rgbHex(mixC(a.sky2, b.sky2)), th.tint2, camp * 0.7),
-    mtn: mixHex(rgbHex(mixC(a.mtn, b.mtn)), th.tint1, camp),
-    hill: mixHex(rgbHex(mixC(a.hill, b.hill)), th.ground, camp),
-    g1: mixHex(rgbHex(mixC(a.g1, b.g1)), th.ground, camp * 0.6),
-    g2: mixHex(rgbHex(mixC(a.g2, b.g2)), th.ground, camp * 0.6),
-    props: (t > 0.5 ? b : a).props,
+  const from = eras[i0].visual, to = eras[i1].visual;
+  return {
+    from, to, t,
+    skyTop: mixHex(from.skyTop, to.skyTop, t),
+    skyBottom: mixHex(from.skyBottom, to.skyBottom, t),
+    mountain: mixHex(from.mountain, to.mountain, t),
+    hill: mixHex(from.hill, to.hill, t),
+    groundTop: mixHex(from.groundTop, to.groundTop, t),
+    groundBottom: mixHex(from.groundBottom, to.groundBottom, t),
+    lightTint: mixHex(from.lightTint, to.lightTint, t),
+    lightStrength: lerp(from.lightStrength, to.lightStrength, t),
   };
-  return env;
 }
 
 /* --------------------------------------------------------- chunked HP bar */
@@ -106,48 +112,102 @@ export function chunkedBar(
 }
 
 /* ------------------------------------------------------------- background */
-function drawProps(ctx: CanvasRenderingContext2D, env: EraEnv, gy: number, s: number, wx: (x: number) => number): void {
-  const base = shade(rgbHex(env.hill), -0.35);
+const STAGE_INDEX: Record<EraStage, number> = { primitive: 1, fortified: 2, engineered: 3, advanced: 4, apex: 5 };
+
+function drawProps(ctx: CanvasRenderingContext2D, visual: EraVisualDef, alpha: number, gy: number, s: number, wx: (x: number) => number, W: number): void {
+  if (alpha <= 0.001) return;
+  const base = shade(visual.hill, -0.35);
+  const stage = STAGE_INDEX[visual.stage];
   // world-anchored scenery across the whole lane so it scrolls with the camera
   const spots = [0.02, 0.1, 0.18, 0.27, 0.36, 0.45, 0.54, 0.63, 0.72, 0.81, 0.9, 0.98];
   spots.forEach((fx, i) => {
-    const x = wx(LANE_W * fx), k = env.props, sc = s * (0.85 + ((i * 7 + 3) % 5) * 0.12);
-    if (x < -80 || x > ctx.canvas.width + 80) return;   // cull (canvas.width ≥ css width, so never over-culls)
-    ctx.save(); ctx.translate(x, gy); ctx.fillStyle = base; ctx.strokeStyle = base;
-    if (k === 'rock') {
-      ctx.beginPath(); ctx.moveTo(-16 * sc, 0); ctx.lineTo(-6 * sc, -15 * sc); ctx.lineTo(8 * sc, -11 * sc); ctx.lineTo(17 * sc, 0); ctx.closePath(); ctx.fill();
-    } else if (k === 'tree') {
-      ctx.fillRect(-2 * sc, -17 * sc, 4 * sc, 17 * sc);
-      ctx.beginPath(); ctx.arc(0, -21 * sc, 11 * sc, 0, TAU); ctx.fill();
-    } else if (k === 'castle') {
+    if (((i * 37) % 100) / 100 > visual.propDensity) return;
+    const x = wx(LANE_W * fx), sc = s * (0.85 + ((i * 7 + 3) % 5) * 0.12);
+    if (x < -90 || x > W + 90) return;
+    ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, gy); ctx.fillStyle = base; ctx.strokeStyle = base;
+
+    if (stage === 1 && visual.motif === 'human') {
+      ctx.beginPath(); ctx.moveTo(-16 * sc, 0); ctx.lineTo(-8 * sc, -13 * sc); ctx.lineTo(6 * sc, -10 * sc); ctx.lineTo(17 * sc, 0); ctx.closePath(); ctx.fill();
+      if (i % 2) { ctx.fillRect(-2 * sc, -22 * sc, 4 * sc, 22 * sc); polyS(ctx, [pt(-9 * sc, -20 * sc), pt(0, -30 * sc), pt(9 * sc, -20 * sc)], visual.accent, 1); }
+    } else if (stage === 1 && visual.motif === 'mythic') {
+      ctx.fillRect(-2 * sc, -22 * sc, 4 * sc, 22 * sc);
+      for (let a = 0; a < 3; a++) { ctx.beginPath(); ctx.arc((a - 1) * 7 * sc, (-22 + Math.abs(a - 1) * 3) * sc, 9 * sc, 0, TAU); ctx.fill(); }
+    } else if (stage === 1) {
+      ctx.beginPath(); ctx.ellipse(0, -6 * sc, 17 * sc, 8 * sc, 0, Math.PI, TAU); ctx.fill();
+      seg(ctx, pt(0, -14 * sc), pt(0, -27 * sc), visual.accent, 1.6 * sc); cirS(ctx, 0, -29 * sc, 2 * sc, visual.accent, 0);
+    } else if (stage === 2) {
       ctx.fillRect(-13 * sc, -30 * sc, 26 * sc, 30 * sc);
       for (let b = 0; b < 4; b++) ctx.fillRect(-13 * sc + b * 7.4 * sc, -35 * sc, 4.6 * sc, 5 * sc);
-      ctx.fillRect(9 * sc, -42 * sc, 7 * sc, 42 * sc);
-    } else if (k === 'city') {
+      if (visual.motif === 'cosmic') { ctx.fillStyle = visual.accent; ctx.fillRect(-9 * sc, -23 * sc, 18 * sc, 2 * sc); }
+      else if (visual.motif === 'mythic') { polyS(ctx, [pt(-14 * sc, -35 * sc), pt(0, -46 * sc), pt(14 * sc, -35 * sc)], visual.accent, 1); }
+    } else if (stage === 3) {
+      ctx.fillRect(-4 * sc, -38 * sc, 8 * sc, 38 * sc);
+      if (visual.motif === 'human') { seg(ctx, pt(0, -35 * sc), pt(20 * sc, -43 * sc), base, 3 * sc); seg(ctx, pt(17 * sc, -42 * sc), pt(17 * sc, -8 * sc), base, 1.5 * sc); }
+      else if (visual.motif === 'mythic') { ctx.strokeStyle = visual.accent; ctx.lineWidth = 3 * sc; ctx.beginPath(); ctx.arc(0, -4 * sc, 18 * sc, Math.PI, TAU); ctx.stroke(); cirS(ctx, 0, -35 * sc, 3 * sc, visual.accent, 0); }
+      else { for (let p = -1; p <= 1; p++) { seg(ctx, pt(0, -28 * sc), pt(p * 12 * sc, -43 * sc), visual.accent, 2 * sc); } }
+    } else if (stage === 4) {
       const h = (24 + ((i * 13 + 2) % 5) * 9) * sc;
       ctx.fillRect(-11 * sc, -h, 22 * sc, h);
-      ctx.fillStyle = shade(rgbHex(env.hill), -0.12);
+      ctx.fillStyle = visual.accent;
       for (let wy = -h + 5 * sc; wy < -5 * sc; wy += 7 * sc) for (let wx = -8 * sc; wx < 8 * sc; wx += 6.4 * sc) ctx.fillRect(wx, wy, 2.6 * sc, 2.6 * sc);
-      if (i % 2) { ctx.fillStyle = base; for (let p = 0; p < 3; p++) ctx.fillRect(-7 * sc + p * 7 * sc, -h - 7 * sc, 3.4 * sc, 7 * sc); }
-    } else { // neon
+      if (visual.motif === 'mythic') { cirS(ctx, 0, -h - 8 * sc, 5 * sc, visual.accent, 0); }
+    } else {
       const h = (28 + ((i * 11 + 1) % 6) * 10) * sc;
       ctx.fillRect(-9 * sc, -h, 18 * sc, h);
-      ctx.fillStyle = ['#7ee0ff', '#ff6bd0', '#b07bff'][i % 3];
+      ctx.fillStyle = visual.accent;
       ctx.fillRect(-1.6 * sc, -h - 12 * sc, 3.2 * sc, 12 * sc);
       ctx.beginPath(); ctx.arc(0, -h - 13 * sc, 2.6 * sc, 0, TAU); ctx.fill();
+      if (visual.motif === 'mythic') { ctx.strokeStyle = visual.accent; ctx.lineWidth = 2 * sc; ctx.beginPath(); ctx.arc(0, -h * 0.55, 15 * sc, 0, TAU); ctx.stroke(); }
     }
     ctx.restore();
   });
 }
 
+function drawGroundPattern(ctx: CanvasRenderingContext2D, visual: EraVisualDef, alpha: number, gy: number, H: number, s: number, wx: (x: number) => number, W: number): void {
+  if (alpha <= 0.001) return;
+  const stage = STAGE_INDEX[visual.stage];
+  ctx.save(); ctx.globalAlpha = alpha * (stage <= 2 ? 0.18 : 0.28); ctx.strokeStyle = visual.accent; ctx.fillStyle = visual.accent;
+  for (let i = 0; i < 30; i++) {
+    const x = wx((i * 431) % LANE_W);
+    if (x < -30 || x > W + 30) continue;
+    const y = gy + (10 + ((i * 97) % 42)) * s;
+    if (stage === 1) { ctx.beginPath(); ctx.ellipse(x, y, 5 * s, 1.4 * s, 0.15, 0, TAU); ctx.fill(); }
+    else if (stage === 2) { ctx.strokeRect(x - 8 * s, y - 3 * s, 16 * s, 6 * s); }
+    else if (stage === 3) { seg(ctx, pt(x - 10 * s, y), pt(x + 10 * s, y), visual.accent, 1.2 * s); }
+    else if (stage === 4) { ctx.fillRect(x - 12 * s, y, 24 * s, 1.5 * s); ctx.fillRect(x, y - 4 * s, 1.5 * s, 9 * s); }
+    else { ctx.beginPath(); ctx.arc(x, y, 4 * s, 0, TAU); ctx.stroke(); ctx.fillRect(x - 0.7 * s, gy, 1.4 * s, H - gy); }
+  }
+  ctx.restore();
+}
+
+function drawAmbient(ctx: CanvasRenderingContext2D, visual: EraVisualDef, alpha: number, t: number, cam: number, gy: number, s: number, W: number): void {
+  if (alpha <= 0.001) return;
+  ctx.save(); ctx.globalAlpha = alpha * 0.45; ctx.fillStyle = visual.accent;
+  for (let i = 0; i < 18; i++) {
+    const phase = t * (visual.ambient === 'energy' ? 24 : 11) + i * 73 - cam * 0.08;
+    const x = ((phase + i * 149) % (W + 80) + W + 80) % (W + 80) - 40;
+    const y = gy * (0.25 + ((i * 41) % 65) / 100);
+    const drift = Math.sin(t * 1.7 + i) * 6 * s;
+    const rise = ((phase % 500) + 500) % 500;
+    if (visual.ambient === 'leaves') { ctx.save(); ctx.translate(x, y + drift); ctx.rotate(phase * 0.03); ctx.fillRect(-3 * s, -1 * s, 6 * s, 2 * s); ctx.restore(); }
+    else if (visual.ambient === 'dust') { ctx.beginPath(); ctx.arc(x, gy - ((rise * 0.35) % (gy * 0.45)), 1.8 * s, 0, TAU); ctx.fill(); }
+    else if (visual.ambient === 'embers') { ctx.fillRect(x, gy - ((rise * 0.55) % (gy * 0.55)), 1.5 * s, 3 * s); }
+    else if (visual.ambient === 'sparks') { ctx.fillRect(x, y + drift, 1.8 * s, 1.8 * s); }
+    else { ctx.beginPath(); ctx.arc(x, y + drift, (1.2 + (i % 3) * 0.6) * s, 0, TAU); ctx.fill(); }
+  }
+  ctx.restore();
+}
+
 /* ------------------------------------------------------------------ base */
-function drawBase(ctx: CanvasRenderingContext2D, b: BaseState, color: string, era: number, gy: number, s: number, popT: number, t: number, wx: (x: number) => number, W: number): void {
-  const w = 58 * s, hgt = (120 + era * 10) * s;
+function drawBase(ctx: CanvasRenderingContext2D, b: BaseState, color: string, visual: EraVisualDef, gy: number, s: number, popT: number, t: number, wx: (x: number) => number, W: number): void {
+  const stage = STAGE_INDEX[visual.stage];
+  const w = (54 + stage * 2) * s, hgt = (118 + stage * 12) * s;
   const isP = b.side === 'player';
   const x = wx(b.x);
   if (x < -120 || x > W + 120) return;   // scrolled off-screen
   const bx = isP ? x - w * 0.7 : x - w * 0.3;
-  const pop = 1 + Math.sin(clamp(popT, 0, 1) * Math.PI) * 0.09;
+  const transitionT = clamp(popT / visual.transition.durationSec, 0, 1);
+  const pop = 1 + Math.sin(transitionT * Math.PI) * 0.09;
 
   ctx.save();
   ctx.translate(bx + w / 2, gy);
@@ -159,25 +219,36 @@ function drawBase(ctx: CanvasRenderingContext2D, b: BaseState, color: string, er
   // subtle darker band under the crown
   ctx.save(); ctx.globalAlpha = 0.18; ctx.fillStyle = '#000';
   ctx.fillRect(bx + 2, by + 3, w - 4, hgt * 0.16); ctx.restore();
-  // masonry lines
+  // campaign-specific construction language: masonry, living growth, or hull panels
   ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1;
-  for (let i = 1; i <= 3; i++) {
-    ctx.beginPath(); ctx.moveTo(bx + 3, by + hgt * (i / 4)); ctx.lineTo(bx + w - 3, by + hgt * (i / 4)); ctx.stroke();
+  const panelLines = visual.motif === 'cosmic' ? 5 : 3;
+  for (let i = 1; i <= panelLines; i++) {
+    ctx.beginPath(); ctx.moveTo(bx + 3, by + hgt * (i / (panelLines + 1))); ctx.lineTo(bx + w - 3, by + hgt * (i / (panelLines + 1))); ctx.stroke();
   }
-  // era-specific crown
-  if (era <= 2) {
-    // thatch / stone lip
+  if (visual.motif === 'mythic') {
+    ctx.strokeStyle = visual.accent; ctx.lineWidth = 1.6 * s;
+    ctx.beginPath(); ctx.moveTo(bx + 8 * s, gy); ctx.bezierCurveTo(bx + 2 * s, by + hgt * 0.7, bx + 16 * s, by + hgt * 0.35, bx + 10 * s, by + 8 * s); ctx.stroke();
+    cirS(ctx, bx + 10 * s, by + hgt * 0.52, 2.2 * s, visual.accent, 0);
+  } else if (visual.motif === 'cosmic') {
+    ctx.fillStyle = visual.accent; ctx.globalAlpha = 0.55;
+    for (let i = 0; i < 3; i++) ctx.fillRect(bx + 6 * s, by + hgt * (0.27 + i * 0.21), w - 12 * s, 1.8 * s);
+    ctx.globalAlpha = 1;
+  }
+
+  // stage-specific crown and silhouette
+  if (stage <= 2) {
     polyS(ctx, [pt(bx - 4 * s, by), pt(bx + w / 2, by - 16 * s), pt(bx + w + 4 * s, by)], shade(color, -0.25), 2);
-  } else if (era === 3) {
+    if (stage === 2) for (let i = 0; i < 3; i++) rrS(ctx, bx + i * (w / 3) + 2 * s, by - 7 * s, w / 3 - 4 * s, 7 * s, 1 * s, color, 1.5);
+  } else if (stage === 3) {
     for (let i = 0; i < 4; i++) rrS(ctx, bx + i * (w / 4) + 1.5 * s, by - 9 * s, w / 4 - 3 * s, 9 * s, 1.5 * s, color, 2);
-  } else if (era === 4) {
+  } else if (stage === 4) {
     rrS(ctx, bx + 4 * s, by - 10 * s, w - 8 * s, 10 * s, 2 * s, shade(color, -0.2), 2);
     seg(ctx, pt(bx + w / 2, by - 10 * s), pt(bx + w / 2, by - 30 * s), shade(color, -0.3), 2 * s);
-    cirS(ctx, bx + w / 2, by - 31 * s, 2.4 * s, '#ff5a5a', 1.4);
+    cirS(ctx, bx + w / 2, by - 31 * s, 2.4 * s, visual.accent, 1.4);
   } else {
     polyS(ctx, [pt(bx + 6 * s, by), pt(bx + w / 2, by - 26 * s), pt(bx + w - 6 * s, by)], shade(color, 0.05), 2);
     ctx.save(); ctx.globalAlpha = 0.6 + 0.3 * Math.sin(t * 4);
-    seg(ctx, pt(bx + w / 2, by - 25 * s), pt(bx + w / 2, by - 38 * s), '#7ee0ff', 2.4 * s);
+    seg(ctx, pt(bx + w / 2, by - 25 * s), pt(bx + w / 2, by - 38 * s), visual.accent, 2.4 * s);
     ctx.restore();
   }
   // arrow-slit windows
@@ -186,8 +257,8 @@ function drawBase(ctx: CanvasRenderingContext2D, b: BaseState, color: string, er
   }
   // flag
   const fx = bx + w / 2;
-  seg(ctx, pt(fx, by - (era >= 5 ? 38 : 16) * s), pt(fx, by - (era >= 5 ? 52 : 40) * s), '#3a3a44', 2 * s);
-  polyS(ctx, [pt(fx + 1, by - (era >= 5 ? 52 : 40) * s), pt(fx + 18 * s, by - (era >= 5 ? 46 : 34) * s), pt(fx + 1, by - (era >= 5 ? 40 : 28) * s)], isP ? '#5ac8ff' : '#ff6b6b', 1.8);
+  seg(ctx, pt(fx, by - (stage >= 5 ? 38 : 16) * s), pt(fx, by - (stage >= 5 ? 52 : 40) * s), '#3a3a44', 2 * s);
+  polyS(ctx, [pt(fx + 1, by - (stage >= 5 ? 52 : 40) * s), pt(fx + 18 * s, by - (stage >= 5 ? 46 : 34) * s), pt(fx + 1, by - (stage >= 5 ? 40 : 28) * s)], isP ? '#5ac8ff' : '#ff6b6b', 1.8);
   // turrets mounted up the inner wall — silhouette per type:
   // rapid = twin thin barrels · splash = fat stubby mortar · sniper = long barrel + scope
   b.turrets.forEach((tr, i) => {
@@ -211,6 +282,24 @@ function drawBase(ctx: CanvasRenderingContext2D, b: BaseState, color: string, er
     }
     ctx.restore();
   });
+
+  // Data-selected rebuild/morph/energy treatment masks the model swap while
+  // leaving base position, HP, collision, and turret behavior untouched.
+  if (transitionT < 1) {
+    const a = 1 - transitionT;
+    ctx.save(); ctx.globalAlpha = a;
+    if (visual.transition.kind === 'rebuild') {
+      ctx.strokeStyle = visual.accent; ctx.lineWidth = 1.5 * s;
+      for (let i = 0; i < 3; i++) { ctx.strokeRect(bx - 5 * s + i * 8 * s, by + i * 16 * s, w + 10 * s - i * 16 * s, hgt - i * 24 * s); }
+    } else if (visual.transition.kind === 'morph') {
+      ctx.strokeStyle = visual.accent; ctx.lineWidth = 3 * s;
+      ctx.beginPath(); ctx.ellipse(bx + w / 2, by + hgt / 2, w * (0.55 + transitionT), hgt * 0.45, 0, 0, TAU); ctx.stroke();
+    } else {
+      ctx.strokeStyle = visual.accent; ctx.lineWidth = 2.5 * s;
+      for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(bx + w / 2, gy - (20 + i * 30) * s, (12 + transitionT * 24) * s, 0, TAU); ctx.stroke(); }
+    }
+    ctx.restore();
+  }
   ctx.restore();
 
   // chunked base HP bar above the tower
@@ -314,7 +403,7 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
   const s = W / VIEW_W;
   lastScale = s;
   const gy = H * 0.78;
-  const env = blendedEnv(dt);
+  const env = blendedVisual(dt);
   const t = engine.time;
 
   // camera glide toward target (drag cancels the target)
@@ -333,10 +422,11 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
 
   // sky (screen-fixed)
   const sky = ctx.createLinearGradient(0, 0, 0, gy);
-  sky.addColorStop(0, env.sky1); sky.addColorStop(1, env.sky2);
+  sky.addColorStop(0, env.skyTop); sky.addColorStop(1, env.skyBottom);
   ctx.fillStyle = sky; ctx.fillRect(-12, -12, W + 24, gy + 12);
   // drifting clouds (slow parallax)
-  ctx.fillStyle = env.props === 'neon' ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.16)';
+  const cloudAlpha = lerp(env.from.stage === 'apex' ? 0.05 : 0.16, env.to.stage === 'apex' ? 0.05 : 0.16, env.t);
+  ctx.fillStyle = `rgba(255,255,255,${cloudAlpha})`;
   for (let i = 0; i < 4; i++) {
     const cx = ((i * W / 3.2 - (t * 7 + cam * 0.15 * s) % (W + 200)) % (W + 200) + W + 200) % (W + 200) - 100;
     const cy = gy * 0.24 + i * 20;
@@ -347,7 +437,7 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
   }
   // far mountains (hazy, 0.35× parallax)
   const mOff = cam * 0.35 * s;
-  ctx.fillStyle = env.mtn;
+  ctx.fillStyle = env.mountain;
   ctx.save(); ctx.globalAlpha = 0.75;
   ctx.beginPath(); ctx.moveTo(0, gy);
   for (let x = 0; x <= W; x += 26) ctx.lineTo(x, gy - 86 * s - 66 * s * Math.abs(Math.sin((x + mOff) * 0.004 + 1.3)));
@@ -358,15 +448,18 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
   ctx.beginPath(); ctx.moveTo(0, gy);
   for (let x = 0; x <= W; x += 26) ctx.lineTo(x, gy - 38 * s - 32 * s * Math.sin((x + hOff) * 0.006 + 2));
   ctx.lineTo(W, gy); ctx.fill();
-  drawProps(ctx, env, gy, s, wx);
+  drawProps(ctx, env.from, 1 - env.t, gy, s, wx, W);
+  drawProps(ctx, env.to, env.t, gy, s, wx, W);
   // ground with grass lip
   const gr = ctx.createLinearGradient(0, gy, 0, H);
-  gr.addColorStop(0, env.g1); gr.addColorStop(1, env.g2);
+  gr.addColorStop(0, env.groundTop); gr.addColorStop(1, env.groundBottom);
   ctx.fillStyle = gr; ctx.fillRect(-12, gy, W + 24, H - gy + 12);
-  ctx.fillStyle = shade(rgbHex(env.g1), 0.18);
+  ctx.fillStyle = shade(rgbHex(env.groundTop), 0.18);
   ctx.fillRect(-12, gy, W + 24, 3 * s);
+  drawGroundPattern(ctx, env.from, 1 - env.t, gy, H, s, wx, W);
+  drawGroundPattern(ctx, env.to, env.t, gy, H, s, wx, W);
   // pebbles across the full lane (world-anchored)
-  ctx.fillStyle = shade(rgbHex(env.g2), -0.15);
+  ctx.fillStyle = shade(rgbHex(env.groundBottom), -0.15);
   for (let i = 0; i < 34; i++) {
     const pxw = (i * 761) % LANE_W;
     const px = wx(pxw);
@@ -375,9 +468,12 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
     ctx.beginPath(); ctx.ellipse(px, py, (2 + (i % 3)) * s, (1.2 + (i % 2)) * s, 0, 0, TAU); ctx.fill();
   }
 
-  // bases (culled by drawBase itself when off-screen)
-  drawBase(ctx, engine.player.base, engine.campaign.theme.basePlayer, engine.player.era, gy, s, engine.player.base.popT ?? 2, t, wx, W);
-  drawBase(ctx, engine.enemy.base, engine.campaign.theme.baseEnemy, engine.enemy.era, gy, s, engine.enemy.base.popT ?? 2, t, wx, W);
+  drawAmbient(ctx, env.from, 1 - env.t, t, cam, gy, s, W);
+  drawAmbient(ctx, env.to, env.t, t, cam, gy, s, W);
+
+  // Bases consume the same Era visual package as the battlefield.
+  drawBase(ctx, engine.player.base, engine.campaign.theme.basePlayer, engine.campaign.eras[engine.player.era - 1].visual, gy, s, engine.player.base.popT ?? 2, t, wx, W);
+  drawBase(ctx, engine.enemy.base, engine.campaign.theme.baseEnemy, engine.campaign.eras[engine.enemy.era - 1].visual, gy, s, engine.enemy.base.popT ?? 2, t, wx, W);
 
   // dust particles behind units
   for (const pa of engine.particles) {
@@ -451,6 +547,10 @@ export function renderScene(ctx: CanvasRenderingContext2D, W: number, H: number,
     ctx.fillText(f.text, px, gy + f.y * s);
     ctx.restore();
   }
+
+  // Subtle era color grade; kept below UI overlays for gameplay readability.
+  ctx.save(); ctx.globalAlpha = env.lightStrength; ctx.fillStyle = env.lightTint;
+  ctx.fillRect(-12, -12, W + 24, H + 24); ctx.restore();
 
   ctx.restore();
 

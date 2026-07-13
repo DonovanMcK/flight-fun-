@@ -7,7 +7,7 @@ import {
   BaseState, CampaignDef, Commander, DoctrineDef, LevelDef, Projectile, Side, SideState, StatMods, Turret, TurretDef,
   UnitDef, UnitInstance,
 } from './types';
-import { CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PASSIVE_GOLD_FALLBACK_PER_SEC, FRIENDLY_DEATH_XP_PCT, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND, TIER_HP, TIER_DMG, MAX_TIER, tierCost } from './data';
+import { AI_OPENING_FORCE, CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PASSIVE_GOLD_FALLBACK_PER_SEC, FRIENDLY_DEATH_XP_PCT, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND, TIER_HP, TIER_DMG, MAX_TIER, tierCost } from './data';
 import { defaultPose, updatePose, ATK_IMPACT } from './rig';
 import { clamp, lerp } from './primitives';
 import { sfx } from './sfx';
@@ -16,6 +16,13 @@ import { LANE_L, LANE_R, LANE_W, UNIT_SPAWN_INSET } from './pacing';
 /** Keep the public geometry exports used by the renderer. */
 export { LANE_L, LANE_R, LANE_W } from './pacing';
 const SPACING = 34;
+export const RANGED_FIRE_RANKS = 2;
+
+/** The rear member of a two-unit firing stack receives one formation spacing
+ *  of reach so both ranks loose together. Later ranks return zero: they wait
+ *  until a front firing slot opens. */
+export const rangedFormationReach = (baseRange: number, rank: number): number =>
+  rank >= 0 && rank < RANGED_FIRE_RANKS ? baseRange + rank * SPACING : 0;
 
 /* ------------------------------------------------------------- VFX types */
 export interface Particle {
@@ -100,6 +107,7 @@ export class Engine {
     this.player = this.makeSide('player', 1, 5);
     const lv = this.level;
     this.enemy = this.makeSide('enemy', lv.startEra, lv.maxEra);
+    this.enemy.gold = lv.enemyStartingGold;
     this.enemy.incomePerSec = PASSIVE_GOLD_FALLBACK_PER_SEC * lv.incomeMul;
     this.enemy.aggro = lv.aggro;
     this.enemy.base.hp = this.enemy.base.maxHp = Math.round(this.campaign.eras[lv.startEra - 1].baseHp * lv.baseHpMul * BASE_HP_SCALE);
@@ -457,13 +465,34 @@ export class Engine {
     return false;
   }
 
+  /** Zero-based position among living ranged allies, ordered front-to-back. */
+  private rangedFireRank(u: UnitInstance): number {
+    if (u.def.role !== 'ranged') return -1;
+    const dir = u.side === 'player' ? 1 : -1;
+    let rank = 0;
+    for (const o of this.units) {
+      if (o === u || o.side !== u.side || o.state === 'die' || o.def.role !== 'ranged') continue;
+      const ahead = (o.x - u.x) * dir;
+      if (ahead > 0.01 || (Math.abs(ahead) <= 0.01 && o.uid < u.uid)) rank++;
+    }
+    return rank;
+  }
+
+  private attackRangeFor(u: UnitInstance): number {
+    return u.def.role === 'ranged'
+      ? rangedFormationReach(u.stats.range, this.rangedFireRank(u))
+      : u.stats.range;
+  }
+
   private findTarget(u: UnitInstance): UnitInstance | null {
     const dir = u.side === 'player' ? 1 : -1;
+    const attackRange = this.attackRangeFor(u);
+    if (attackRange <= 0) return null;
     let best: UnitInstance | null = null, bd = Infinity;
     for (const o of this.units) {
       if (o.side === u.side || o.state === 'die') continue;
       const d = (o.x - u.x) * dir;
-      if (d >= -8 && Math.abs(o.x - u.x) <= u.stats.range && Math.abs(o.x - u.x) < bd) {
+      if (d >= -8 && Math.abs(o.x - u.x) <= attackRange && Math.abs(o.x - u.x) < bd) {
         best = o; bd = Math.abs(o.x - u.x);
       }
     }
@@ -511,10 +540,12 @@ export class Engine {
   private enemyAI(dt: number): void {
     const E = this.enemy;
     const cmd = this.commander;
+    const fieldedEnemyUnits = this.units.filter(u => u.side === 'enemy' && u.state !== 'die').length + E.queue.length;
+    const openingForceReady = fieldedEnemyUnits >= AI_OPENING_FORCE;
     // evolve up the window when XP allows
     if (this.canEvolve('enemy')) this.evolve('enemy');
     // turret buys — type weighted by commander preference; slots bought when rich
-    if (E.base.turrets.length < E.base.slots && Math.random() < dt * 0.25 * cmd.turretInvestment) {
+    if (openingForceReady && E.base.turrets.length < E.base.slots && Math.random() < dt * 0.25 * cmd.turretInvestment) {
       const options = this.campaign.eras[E.era - 1].turrets.filter(td => E.gold > td.cost * 1.4);
       if (options.length) {
         const total = options.reduce((a, td) => a + (cmd.turretPref[td.kind] ?? 1), 0);
@@ -525,15 +556,15 @@ export class Engine {
       }
     }
     const slotCost = this.nextSlotCost('enemy');
-    if (slotCost != null && E.base.turrets.length >= E.base.slots && E.gold > slotCost * 2.2 && Math.random() < dt * 0.12 * cmd.turretInvestment) {
+    if (openingForceReady && slotCost != null && E.base.turrets.length >= E.base.slots && E.gold > slotCost * 2.2 && Math.random() < dt * 0.12 * cmd.turretInvestment) {
       this.buySlot('enemy');
     }
     // sell outdated turrets (2+ eras behind) to rebuild with current tech
     const stale = E.base.turrets.findIndex(tr => tr.era <= E.era - 2);
-    if (stale >= 0 && Math.random() < dt * 0.1 * cmd.turretInvestment) this.sellTurret('enemy', stale);
+    if (openingForceReady && stale >= 0 && Math.random() < dt * 0.1 * cmd.turretInvestment) this.sellTurret('enemy', stale);
     // tier upgrades when gold pools (the Economist and the Warlord love these)
     const tierChance = cmd.id === 'economist' || cmd.boss ? 0.14 : 0.05;
-    if (Math.random() < dt * tierChance) {
+    if (openingForceReady && Math.random() < dt * tierChance) {
       const eraUnits = this.campaign.eras[E.era - 1].units;
       const candidate = eraUnits[(Math.random() * eraUnits.length) | 0];
       const cur = E.tiers[candidate.id] ?? 0;
@@ -624,7 +655,7 @@ export class Engine {
       const foeBase = this.sideFor(foeSide).base;
       const dir = u.side === 'player' ? 1 : -1;
       const target = this.findTarget(u);
-      const baseInRange = foeBase.hp > 0 && Math.abs(foeBase.x - u.x) <= u.stats.range;
+      const baseInRange = foeBase.hp > 0 && Math.abs(foeBase.x - u.x) <= this.attackRangeFor(u);
 
       if (u.state === 'attack') {
         const cycle = Math.max(0.45, u.stats.cdMs / 1000);
@@ -637,7 +668,7 @@ export class Engine {
           if (u.targetIsBase && baseInRange) {
             if (isRangedLike && Math.abs(foeBase.x - u.x) > 60) this.fireProjectile(u, null, true);
             else { this.damageBase(foeSide, u.stats.dmg); this.burst(foeBase.x - dir * 8, -60, 5, '#ffd25a', 'spark'); sfx('hit'); }
-          } else if (tgt && Math.abs(tgt.x - u.x) <= u.stats.range + 10) {
+          } else if (tgt && Math.abs(tgt.x - u.x) <= this.attackRangeFor(u) + 10) {
             if (isRangedLike && Math.abs(tgt.x - u.x) > 60) this.fireProjectile(u, tgt, false);
             else {
               this.damageUnit(tgt, u.stats.dmg, u.side, u);

@@ -204,12 +204,38 @@ export interface LevelDef {
   startEra: number;            // 1-based
   maxEra: number;              // 1-based cap
   incomeMul: number;
+  enemyStartingGold: number;   // opening war chest; ongoing income remains combat-driven
   aggro: number;
   baseHpMul: number;
   commanderId: string;
 }
 
 export interface SpecialDef { name: string; icon: string; dmg: number; radius: number; cdSec: number; kind: 'rocks' | 'arrows' | 'shells' | 'fire' | 'beam'; }
+
+export type EraMotif = 'human' | 'mythic' | 'cosmic';
+export type EraStage = 'primitive' | 'fortified' | 'engineered' | 'advanced' | 'apex';
+export type AmbientEffect = 'dust' | 'leaves' | 'embers' | 'sparks' | 'energy';
+export type EvolutionEffect = 'rebuild' | 'morph' | 'energy';
+
+/** Complete visual package for one era. The renderer consumes this data only;
+ *  adding another era can reuse the procedural motif/stage vocabulary without
+ *  changing combat or progression code. */
+export interface EraVisualDef {
+  skyTop: string;
+  skyBottom: string;
+  mountain: string;
+  hill: string;
+  groundTop: string;
+  groundBottom: string;
+  lightTint: string;
+  lightStrength: number;
+  accent: string;
+  motif: EraMotif;
+  stage: EraStage;
+  ambient: AmbientEffect;
+  propDensity: number;
+  transition: { kind: EvolutionEffect; durationSec: number };
+}
 
 /** Stat multipliers a doctrine applies (1 = unchanged). */
 export interface StatMods { hp?: number; dmg?: number; spd?: number; range?: number; cdMs?: number; cost?: number; aoe?: number; }
@@ -236,6 +262,7 @@ export interface EraDef {
   evolveXp: number;            // XP required to evolve INTO this era
   baseHp: number;
   special: SpecialDef;
+  visual: EraVisualDef;
 }
 
 export interface CampaignTheme {

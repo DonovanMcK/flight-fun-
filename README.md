@@ -42,6 +42,8 @@ spawn queue forces spend timing over spam.
   slots, sell for refund — straight from Age of War's playbook
 - **Veterancy** — units that bank enough kills go veteran: **bonus gold per kill** (never stats),
   marked with a rank pip worth protecting
+- **Two-rank ranged formations** — the front two ranged units loose together; later ranks hold
+  until a firing position opens
 - **♾️ Endless mode** — era window scales with wave (`floor ≈ wave/3`, `cap ≈ wave/2`)
 - Progress, endless best, and sound settings persist in localStorage
 
@@ -53,12 +55,15 @@ spawn queue forces spend timing over spam.
 - **Chunked HP bars** (units + bases) — damage knocks out discrete segments
 - **Hit-stop** on heavy/lethal impacts only; **screen shake on specials only**
 - Dust puffs, hit sparks, muzzle smoke, weapon-swing motion trails, floating gold
+- **Data-driven world evolution** — base architecture, skyline, ground markings, ambient
+  particles, atmosphere, and lighting transform through campaign-specific Era packages
 
 ## 🛠 Dev
 
 ```bash
 npm install
 npm run dev      # vite dev server
+npm test         # deterministic pacing, economy, AI, formation, and visual-data checks
 npm run build    # typecheck + single-file production build → dist/index.html
 ```
 
@@ -66,6 +71,8 @@ Everything is data-driven: `src/game/data.ts` holds all 45 unit defs, commanders
 tables; `src/game/rig.ts` is the skeletal animation + 6 rig archetypes (biped, rider, wheeled,
 vehicle, flyer, beast); `src/game/engine.ts` is the simulation; `src/game/render.ts` the scene.
 UI/HUD is React over the canvas.
+
+See [`docs/ERA_VISUAL_SYSTEM.md`](docs/ERA_VISUAL_SYSTEM.md) to add or tune Era visuals.
 
 Movement uses six named tiers derived from unobstructed base-to-center travel targets in
 `src/game/pacing.ts`; each unit keeps an explicit tier based on its role and visual weight.
