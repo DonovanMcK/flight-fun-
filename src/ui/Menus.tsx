@@ -84,6 +84,7 @@ export function HowTo({ onBack }: { onBack: () => void }): JSX.Element {
     '🕊 Your fallen units grant a little XP too, so a losing push still teaches you.',
     '⭐ Supply caps your army; queued units emerge from your base.',
     '🏹 Your front two ranged units can fire together; later ranks wait for a slot.',
+    '🏰 At an exposed base, 3 frontline and 2 support troops can attack from staggered positions.',
     '🧬 XP fills the bar — EVOLVE to unlock a stronger era.',
     '🛡 Turrets auto-fire from your tower. Buy again to upgrade old ones.',
     '☄️ Your Special wipes a push — save it for emergencies.',

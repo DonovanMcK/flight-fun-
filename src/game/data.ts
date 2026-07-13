@@ -24,11 +24,11 @@ export const KILL_GOLD_MULT = 1.3;      // goldReward ≈ UnitValue × 1.2–1.5
 export const KILL_XP_MULT = 1.8;        // xpReward ≈ goldReward × 1.5–2.5
 export const FRIENDLY_DEATH_XP_PCT = 0.2; // consolation XP: 10–30% of the unit's kill XP
 export const BOSS_GOLD_MULT = 1.6;      // elite/boss bonus payouts
-export const EVOLVE_XP = [0, 350, 900, 1800, 3200];    // XP to evolve INTO era idx (0-based)
+export const EVOLVE_XP = [0, 500, 1400, 2800, 4800];    // XP to evolve INTO era idx (0-based)
 export const BASE_HP_SCALE = 0.6;
 /** Troop limit grows with each era: base + (era-1) * per-era bonus. */
 export const SUPPLY_BASE = 10;
-export const SUPPLY_PER_ERA = 3;
+export const SUPPLY_PER_ERA = 2;
 export const supplyCapFor = (era: number): number => SUPPLY_BASE + (era - 1) * SUPPLY_PER_ERA;
 /** Optional anti-stalemate fallback. Disabled by default; setting this above
  *  zero deliberately re-enables passive Gold for both sides (never XP). */
@@ -119,16 +119,16 @@ function makeBoss(campaign: string, name: string, rig: RigConfig): UnitDef {
   };
 }
 
-/** 3 turret options per era, cheap → expensive, mirroring Age of War's
- *  Slingshot / Catapult / Ion-Cannon ladder:
+/** Turrets support a defense without erasing a full late-game push.
+ *  Three options per era form a cheap-to-expensive ladder:
  *  Rapid = cheap fast single-target · Splash = slow AoE lobber ·
  *  Sniper = long-range heavy single hit (era 5 sniper almost reaches mid-lane). */
 const turretsFor = (era: number): TurretDef[] => {
   const s = eraScale(era - 1);
   return [
-    { kind: 'rapid', name: 'Rapid', icon: '⚡', damage: Math.round(10 * s.dmg), range: 250 + era * 12, cooldownMs: 380, cost: Math.round(120 * s.cost), aoe: 0, proj: 'bullet' },
-    { kind: 'heavy', name: 'Splash', icon: '💥', damage: Math.round(42 * s.dmg), range: 290 + era * 12, cooldownMs: 1900, cost: Math.round(260 * s.cost), aoe: 52, proj: 'shell' },
-    { kind: 'sniper', name: 'Sniper', icon: '🎯', damage: Math.round(85 * s.dmg), range: 400 + era * 24, cooldownMs: 2600, cost: Math.round(480 * s.cost), aoe: 0, proj: 'beam' },
+    { kind: 'rapid', name: 'Rapid', icon: '⚡', damage: Math.round(8 * s.dmg), range: 250 + era * 10, cooldownMs: 380, cost: Math.round(120 * s.cost), aoe: 0, proj: 'bullet' },
+    { kind: 'heavy', name: 'Splash', icon: '💥', damage: Math.round(32 * s.dmg), range: 285 + era * 10, cooldownMs: 1900, cost: Math.round(260 * s.cost), aoe: 52, proj: 'shell' },
+    { kind: 'sniper', name: 'Sniper', icon: '🎯', damage: Math.round(62 * s.dmg), range: 385 + era * 15, cooldownMs: 2600, cost: Math.round(480 * s.cost), aoe: 0, proj: 'beam' },
   ];
 };
 
@@ -136,6 +136,7 @@ const turretsFor = (era: number): TurretDef[] => {
  *  escalating-cost ladder from Age of War, scaled to this economy. */
 export const TURRET_SLOT_COSTS = [300, 800, 2000];
 export const MAX_TURRET_SLOTS = 4;
+export const AI_MAX_TURRET_SLOTS = 3;
 export const TURRET_SELL_REFUND = 0.6;
 
 /* --------------------------------------------------- unit tier upgrades (A) */
@@ -175,8 +176,8 @@ function doctrinePairs(campaignId: string, names: [string, string, string, strin
     [ // era 5: Apex vs Horde
       D(6, 5, 'defensive', ['Era-5 units +25% HP, +15% damage'], ['Era-5 units cost +25%'],
         { allMods: { hp: 1.25, dmg: 1.15, cost: 1.25 } }),
-      D(7, 5, 'aggressive', ['Era-5 units cost −20%', '+3 supply cap'], ['Era-5 units −15% HP'],
-        { allMods: { cost: 0.8, hp: 0.85 }, rider: { supplyBonus: 3 } }),
+      D(7, 5, 'aggressive', ['Era-5 units cost −20%', '+2 supply cap'], ['Era-5 units −15% HP'],
+        { allMods: { cost: 0.8, hp: 0.85 }, rider: { supplyBonus: 2 } }),
     ],
   ];
 }
@@ -222,7 +223,7 @@ export const COMMANDERS: Record<string, Commander> = {
   boss: {
     id: 'boss', name: 'The Warlord',
     spawnRateMul: 1.15, roleWeights: W(1, 0.7, 1.3, 2, 2),
-    evolveAggression: 1.6, turretInvestment: 2, specialAggression: 1.6,
+    evolveAggression: 1.15, turretInvestment: 1.35, specialAggression: 1.4,
     turretPref: { rapid: 1, heavy: 2, sniper: 3 },
     boss: true,
   },
@@ -244,7 +245,7 @@ function levelsFor(): LevelDef[] {
     incomeMul: (0.85 + i * 0.13) * (commanders[i] === 'boss' ? 1.2 : 1),
     enemyStartingGold: Math.round((300 + i * 90) * (commanders[i] === 'boss' ? 1.25 : 1)),
     aggro: 0.85 + i * 0.07,
-    baseHpMul: (1 + i * 0.12) * (commanders[i] === 'boss' ? 1.3 : 1),
+    baseHpMul: (1 + i * 0.08) * (commanders[i] === 'boss' ? 1.15 : 1),
     commanderId: commanders[i],
   }));
 }

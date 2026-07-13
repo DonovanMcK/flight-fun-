@@ -7,7 +7,7 @@ import {
   BaseState, CampaignDef, Commander, DoctrineDef, LevelDef, Projectile, Side, SideState, StatMods, Turret, TurretDef,
   UnitDef, UnitInstance,
 } from './types';
-import { AI_OPENING_FORCE, CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PASSIVE_GOLD_FALLBACK_PER_SEC, FRIENDLY_DEATH_XP_PCT, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND, TIER_HP, TIER_DMG, MAX_TIER, tierCost } from './data';
+import { AI_MAX_TURRET_SLOTS, AI_OPENING_FORCE, CAMPAIGNS, COMMANDERS, endlessLevel, EVOLVE_XP, BASE_HP_SCALE, supplyCapFor, PASSIVE_GOLD_FALLBACK_PER_SEC, FRIENDLY_DEATH_XP_PCT, QUEUE_MAX, VETERAN_GOLD_BONUS, TURRET_SLOT_COSTS, MAX_TURRET_SLOTS, TURRET_SELL_REFUND, TIER_HP, TIER_DMG, MAX_TIER, tierCost } from './data';
 import { defaultPose, updatePose, ATK_IMPACT } from './rig';
 import { clamp, lerp } from './primitives';
 import { sfx } from './sfx';
@@ -17,12 +17,31 @@ import { LANE_L, LANE_R, LANE_W, UNIT_SPAWN_INSET } from './pacing';
 export { LANE_L, LANE_R, LANE_W } from './pacing';
 const SPACING = 34;
 export const RANGED_FIRE_RANKS = 2;
+export const BASE_FRONTLINE_ASSAULT_SLOTS = 3;
+export const BASE_SUPPORT_ASSAULT_SLOTS = 2;
 
 /** The rear member of a two-unit firing stack receives one formation spacing
  *  of reach so both ranks loose together. Later ranks return zero: they wait
  *  until a front firing slot opens. */
 export const rangedFormationReach = (baseRange: number, rank: number): number =>
   rank >= 0 && rank < RANGED_FIRE_RANKS ? baseRange + rank * SPACING : 0;
+
+/** Base assault slots are derived from formation spacing: troops never overlap,
+ *  but the first three frontline and first two support ranks can contribute. */
+export const baseAssaultReach = (baseRange: number, rank: number, slots: number): number =>
+  rank >= 0 && rank < slots ? baseRange + rank * SPACING : 0;
+
+/** A troop-only deadlock breaker. It ramps from no bonus at 12 seconds to a
+ *  capped +25% at 20 seconds; turrets, specials and base damage never use it. */
+export const stalemateDamageMultiplier = (stalledSeconds: number): number =>
+  1 + 0.25 * clamp((stalledSeconds - 12) / 8, 0, 1);
+
+/** Only current- and previous-era units are valid AI recruits. */
+export const aiRosterEraWeight = (currentEra: number, candidateEra: number): number => {
+  if (candidateEra === currentEra) return 5;
+  if (candidateEra === currentEra - 1) return 1;
+  return 0;
+};
 
 /** AI tier progression mirrors the player's unlocks: it may catch up, but it
  *  can never field a tier the player has not purchased for that unit type. */
@@ -86,10 +105,14 @@ export class Engine {
   pendingDoctrines: [DoctrineDef, DoctrineDef] | null = null;
   /** canvas toast when the ENEMY adopts a doctrine */
   doctrineToast: { text: string; t: number } | null = null;
+  /** Seconds both armies have held the same congested front. */
+  stalemateT = 0;
 
   save: SaveData = loadSave();
 
   private uidSeq = 1;
+  private lastPlayerFront: number | null = null;
+  private lastEnemyFront: number | null = null;
   private listeners = new Set<() => void>();
   private version = 0;
 
@@ -106,6 +129,7 @@ export class Engine {
     this.mode = 'battle'; this.result = null; this.paused = false; this.speed = 1; this.time = 0;
     this.units = []; this.projectiles = []; this.particles = []; this.floats = []; this.specialFx = [];
     this.shake = 0; this.hitStop = 0; this.evolveFlash = 0;
+    this.stalemateT = 0; this.lastPlayerFront = null; this.lastEnemyFront = null;
     this.pendingDoctrines = null; this.doctrineToast = null;
     this.commander = COMMANDERS[this.level.commanderId] ?? COMMANDERS.rusher;
 
@@ -384,6 +408,9 @@ export class Engine {
 
   private damageUnit(u: UnitInstance, dmg: number, from: Side, attacker: UnitInstance | null = null): void {
     if (u.state === 'die') return;
+    // Only attacks made by troops receive deadlock pressure. Calls from
+    // turrets and specials have no attacker, so their damage is unchanged.
+    if (attacker) dmg *= stalemateDamageMultiplier(this.stalemateT);
     u.hp -= dmg;
     u.hitFlash = 0.25;
     if (u.hp <= 0) {
@@ -488,6 +515,55 @@ export class Engine {
       : u.stats.range;
   }
 
+  /** Zero-based place in the appropriate base-assault group. Support consists
+   *  of ranged and siege units; all other roles occupy frontline slots. */
+  private baseAssaultRank(u: UnitInstance): number {
+    const support = u.def.role === 'ranged' || u.def.role === 'siege';
+    const dir = u.side === 'player' ? 1 : -1;
+    let rank = 0;
+    for (const o of this.units) {
+      if (o === u || o.side !== u.side || o.state === 'die') continue;
+      const otherSupport = o.def.role === 'ranged' || o.def.role === 'siege';
+      if (otherSupport !== support) continue;
+      const ahead = (o.x - u.x) * dir;
+      if (ahead > 0.01 || (Math.abs(ahead) <= 0.01 && o.uid < u.uid)) rank++;
+    }
+    return rank;
+  }
+
+  private baseAttackRangeFor(u: UnitInstance): number {
+    const support = u.def.role === 'ranged' || u.def.role === 'siege';
+    return baseAssaultReach(
+      u.stats.range,
+      this.baseAssaultRank(u),
+      support ? BASE_SUPPORT_ASSAULT_SLOTS : BASE_FRONTLINE_ASSAULT_SLOTS,
+    );
+  }
+
+  /** Track a genuine locked front, not merely a large army. A death or a push
+   *  moves one of the leading positions and immediately bleeds off pressure. */
+  private updateStalemate(dt: number): void {
+    const players = this.units.filter(u => u.side === 'player' && u.state !== 'die');
+    const enemies = this.units.filter(u => u.side === 'enemy' && u.state !== 'die');
+    if (players.length < 3 || enemies.length < 3) {
+      this.stalemateT = Math.max(0, this.stalemateT - dt * 3);
+      this.lastPlayerFront = players.length ? Math.max(...players.map(u => u.x)) : null;
+      this.lastEnemyFront = enemies.length ? Math.min(...enemies.map(u => u.x)) : null;
+      return;
+    }
+
+    const playerFront = Math.max(...players.map(u => u.x));
+    const enemyFront = Math.min(...enemies.map(u => u.x));
+    const priorKnown = this.lastPlayerFront !== null && this.lastEnemyFront !== null;
+    const movement = priorKnown
+      ? Math.abs(playerFront - this.lastPlayerFront!) + Math.abs(enemyFront - this.lastEnemyFront!)
+      : Infinity;
+    const locked = enemyFront - playerFront <= 380 && movement <= dt * 20;
+    this.stalemateT = locked ? this.stalemateT + dt : Math.max(0, this.stalemateT - dt * 3);
+    this.lastPlayerFront = playerFront;
+    this.lastEnemyFront = enemyFront;
+  }
+
   private findTarget(u: UnitInstance): UnitInstance | null {
     const dir = u.side === 'player' ? 1 : -1;
     const attackRange = this.attackRangeFor(u);
@@ -560,7 +636,7 @@ export class Engine {
       }
     }
     const slotCost = this.nextSlotCost('enemy');
-    if (openingForceReady && slotCost != null && E.base.turrets.length >= E.base.slots && E.gold > slotCost * 2.2 && Math.random() < dt * 0.12 * cmd.turretInvestment) {
+    if (openingForceReady && E.base.slots < AI_MAX_TURRET_SLOTS && slotCost != null && E.base.turrets.length >= E.base.slots && E.gold > slotCost * 2.2 && Math.random() < dt * 0.12 * cmd.turretInvestment) {
       this.buySlot('enemy');
     }
     // sell outdated turrets (2+ eras behind) to rebuild with current tech
@@ -590,14 +666,15 @@ export class Engine {
         this.buyUnit('enemy', boss);
       }
     }
-    // spawn loop: role-weighted mix within era window (older eras stay available)
+    // Spawn loop: current-era forces dominate, with the immediately previous
+    // era retained as light support. Ancient units are retired from the pool.
     E.aiSpawnT -= dt;
     if (E.aiSpawnT <= 0) {
       E.aiSpawnT = (lerp(3, 1, clamp(E.aggro / 1.4, 0, 1)) + (Math.random() - 0.4) * 0.6) / cmd.spawnRateMul;
-      const startIdx = this.level.startEra - 1;
+      const startIdx = Math.max(0, E.era - 2);
       const candidates: { def: UnitDef; w: number }[] = [];
       for (let e = startIdx; e < E.era; e++) {
-        const eraW = e === E.era - 1 ? 3 : 1;          // current era favored
+        const eraW = aiRosterEraWeight(E.era, e + 1);
         for (const d of this.campaign.eras[e].units) {
           if (!this.canBuy('enemy', d)) continue;
           candidates.push({ def: d, w: eraW * (cmd.roleWeights[d.role] ?? 1) });
@@ -660,7 +737,7 @@ export class Engine {
       const foeBase = this.sideFor(foeSide).base;
       const dir = u.side === 'player' ? 1 : -1;
       const target = this.findTarget(u);
-      const baseInRange = foeBase.hp > 0 && Math.abs(foeBase.x - u.x) <= this.attackRangeFor(u);
+      const baseInRange = foeBase.hp > 0 && Math.abs(foeBase.x - u.x) <= this.baseAttackRangeFor(u);
 
       if (u.state === 'attack') {
         const cycle = Math.max(0.45, u.stats.cdMs / 1000);
@@ -696,7 +773,7 @@ export class Engine {
         }
       } else {
         if (target) { u.state = 'attack'; u.targetUid = target.uid; u.targetIsBase = false; u.attackT = 0; u.didImpact = false; }
-        else if (baseInRange && !this.frontBlocked(u)) { u.state = 'attack'; u.targetUid = null; u.targetIsBase = true; u.attackT = 0; u.didImpact = false; }
+        else if (baseInRange) { u.state = 'attack'; u.targetUid = null; u.targetIsBase = true; u.attackT = 0; u.didImpact = false; }
         else if (!this.frontBlocked(u)) {
           u.state = 'walk';
           u.x += dir * u.stats.spd * dt;
@@ -715,6 +792,7 @@ export class Engine {
       }
       updatePose(u, dt);
     }
+    this.updateStalemate(dt);
     this.units = this.units.filter(u => u.state !== 'die' || u.deadT < 0.75);
 
     // projectiles

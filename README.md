@@ -22,7 +22,7 @@ so you swipe/drag (or use the minimap strip and ⇤ ⚔ ⇥ jump buttons) to pan
 the front line, and the enemy base. Both base HP bars stay pinned to the top corners. Units
 auto-walk and fight on contact; destroy the enemy base before yours falls. Gold from kills
 buys units and base **turrets**; combat XP drives era **evolution**, and each era has a charged **special** (boulder →
-airstrike → dragonfire → orbital laser). A **supply cap that grows each era** (10 → 22) plus a
+airstrike → dragonfire → orbital laser). A **supply cap that grows each era** (10 → 18) plus a
 spawn queue forces spend timing over spam.
 
 - **3 campaigns × 5 eras × 3 units = 45 hand-rigged units**
@@ -38,12 +38,14 @@ spawn queue forces spend timing over spam.
   for the battle — 16 possible army builds per campaign per run; enemy commanders pick too
 - **Unit tier upgrades** — pay gold mid-battle to train each unit type I → II → III
   (+30% HP / +25% dmg per tier); applies to living units and future spawns
-- **Turret variety** — 3 turret types per era (Rapid / Splash / Sniper), 1→4 purchasable
-  slots, sell for refund — straight from Age of War's playbook
+- **Turret variety** — 3 turret types per era (Rapid / Splash / Sniper), up to 4 player
+  slots and 3 AI slots, with resale for a partial refund
 - **Veterancy** — units that bank enough kills go veteran: **bonus gold per kill** (never stats),
   marked with a rank pip worth protecting
 - **Two-rank ranged formations** — the front two ranged units loose together; later ranks hold
   until a firing position opens
+- **Limited base assaults** — 3 staggered frontline troops and 2 support troops can strike an
+  exposed base together, without enabling general unit overlap
 - **♾️ Endless mode** — both sides start at Era 1 while the enemy evolution cap rises by wave
 - Progress, endless best, and sound settings persist in localStorage
 
