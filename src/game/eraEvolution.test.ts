@@ -59,7 +59,7 @@ describe('late-game anti-stalemate pacing', () => {
   });
 
   it('slows evolution and keeps the normal era-five supply cap at eighteen', () => {
-    expect(EVOLVE_XP).toEqual([0, 500, 1400, 2800, 4800]);
+    expect(EVOLVE_XP).toEqual([0, 750, 2100, 4500, 8000]);
     expect(supplyCapFor(5)).toBe(18);
   });
 

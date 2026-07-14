@@ -24,7 +24,10 @@ export const KILL_GOLD_MULT = 1.3;      // goldReward ≈ UnitValue × 1.2–1.5
 export const KILL_XP_MULT = 1.8;        // xpReward ≈ goldReward × 1.5–2.5
 export const FRIENDLY_DEATH_XP_PCT = 0.2; // consolation XP: 10–30% of the unit's kill XP
 export const BOSS_GOLD_MULT = 1.6;      // elite/boss bonus payouts
-export const EVOLVE_XP = [0, 500, 1400, 2800, 4800];    // XP to evolve INTO era idx (0-based)
+/** Per-step evolution cost. XP is spent on evolution, so these values are
+ *  derived from the number of combat victories each era should have time to
+ *  showcase—not from elapsed match time. */
+export const EVOLVE_XP = [0, 750, 2100, 4500, 8000];    // XP to evolve INTO era idx (0-based)
 export const BASE_HP_SCALE = 0.6;
 /** Troop limit grows with each era: base + (era-1) * per-era bonus. */
 export const SUPPLY_BASE = 10;
